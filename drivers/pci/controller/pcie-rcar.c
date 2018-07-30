@@ -680,11 +680,7 @@ static int rcar_pcie_phy_init_gen3(struct rcar_pcie *pcie)
 	if (err)
 		return err;
 
-	err = phy_power_on(pcie->phy);
-	if (err)
-		phy_exit(pcie->phy);
-
-	return err;
+	return phy_power_on(pcie->phy);
 }
 
 static int rcar_msi_alloc(struct rcar_msi *chip)
@@ -1169,7 +1165,7 @@ static int rcar_pcie_probe(struct platform_device *pdev)
 	if (rcar_pcie_hw_init(pcie)) {
 		dev_info(dev, "PCIe link down\n");
 		err = -ENODEV;
-		goto err_phy_shutdown;
+		goto err_clk_disable;
 	}
 
 	data = rcar_pci_read_reg(pcie, MACSR);
@@ -1181,7 +1177,7 @@ static int rcar_pcie_probe(struct platform_device *pdev)
 			dev_err(dev,
 				"failed to enable MSI support: %d\n",
 				err);
-			goto err_phy_shutdown;
+			goto err_clk_disable;
 		}
 	}
 
@@ -1194,12 +1190,6 @@ static int rcar_pcie_probe(struct platform_device *pdev)
 err_msi_teardown:
 	if (IS_ENABLED(CONFIG_PCI_MSI))
 		rcar_pcie_teardown_msi(pcie);
-
-err_phy_shutdown:
-	if (pcie->phy) {
-		phy_power_off(pcie->phy);
-		phy_exit(pcie->phy);
-	}
 
 err_clk_disable:
 	clk_disable_unprepare(pcie->bus_clk);

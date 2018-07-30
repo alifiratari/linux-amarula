@@ -216,8 +216,7 @@ static struct vfsmount *nfs_do_clone_mount(struct nfs_server *server,
 					   const char *devname,
 					   struct nfs_clone_mount *mountdata)
 {
-	return vfs_submount(mountdata->dentry, &nfs_xdev_fs_type, devname,
-			    mountdata, 0);
+	return vfs_submount(mountdata->dentry, &nfs_xdev_fs_type, devname, mountdata);
 }
 
 /**

@@ -270,11 +270,7 @@ unlock:
 		goto retry;
 	}
 
-	if (!err) {
-		preempt_disable();
-		wake_up_q(&wakeq);
-		preempt_enable();
-	}
+	wake_up_q(&wakeq);
 
 	return err;
 }

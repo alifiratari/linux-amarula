@@ -1132,7 +1132,7 @@ xfs_refcount_finish_one(
 		if (!agbp)
 			return -EFSCORRUPTED;
 
-		rcur = xfs_refcountbt_init_cursor(mp, tp, agbp, agno);
+		rcur = xfs_refcountbt_init_cursor(mp, tp, agbp, agno, dfops);
 		if (!rcur) {
 			error = -ENOMEM;
 			goto out_cur;
@@ -1666,7 +1666,7 @@ xfs_refcount_recover_cow_leftovers(
 		error = -ENOMEM;
 		goto out_trans;
 	}
-	cur = xfs_refcountbt_init_cursor(mp, tp, agbp, agno);
+	cur = xfs_refcountbt_init_cursor(mp, tp, agbp, agno, NULL);
 
 	/* Find all the leftover CoW staging extents. */
 	memset(&low, 0, sizeof(low));
@@ -1691,19 +1691,19 @@ xfs_refcount_recover_cow_leftovers(
 		trace_xfs_refcount_recover_extent(mp, agno, &rr->rr_rrec);
 
 		/* Free the orphan record */
-		xfs_defer_init(tp, &dfops);
+		xfs_defer_init(&dfops, &fsb);
 		agbno = rr->rr_rrec.rc_startblock - XFS_REFC_COW_START;
 		fsb = XFS_AGB_TO_FSB(mp, agno, agbno);
-		error = xfs_refcount_free_cow_extent(mp, tp->t_dfops, fsb,
+		error = xfs_refcount_free_cow_extent(mp, &dfops, fsb,
 				rr->rr_rrec.rc_blockcount);
 		if (error)
 			goto out_defer;
 
 		/* Free the block. */
-		xfs_bmap_add_free(mp, tp->t_dfops, fsb,
+		xfs_bmap_add_free(mp, &dfops, fsb,
 				rr->rr_rrec.rc_blockcount, NULL);
 
-		error = xfs_defer_finish(&tp, tp->t_dfops);
+		error = xfs_defer_finish(&tp, &dfops);
 		if (error)
 			goto out_defer;
 
@@ -1717,7 +1717,7 @@ xfs_refcount_recover_cow_leftovers(
 
 	return error;
 out_defer:
-	xfs_defer_cancel(tp->t_dfops);
+	xfs_defer_cancel(&dfops);
 out_trans:
 	xfs_trans_cancel(tp);
 out_free:

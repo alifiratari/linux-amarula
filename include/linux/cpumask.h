@@ -115,17 +115,12 @@ extern struct cpumask __cpu_active_mask;
 #define cpu_active(cpu)		((cpu) == 0)
 #endif
 
-static inline void cpu_max_bits_warn(unsigned int cpu, unsigned int bits)
-{
-#ifdef CONFIG_DEBUG_PER_CPU_MAPS
-	WARN_ON_ONCE(cpu >= bits);
-#endif /* CONFIG_DEBUG_PER_CPU_MAPS */
-}
-
 /* verify cpu argument to cpumask_* operators */
 static inline unsigned int cpumask_check(unsigned int cpu)
 {
-	cpu_max_bits_warn(cpu, nr_cpumask_bits);
+#ifdef CONFIG_DEBUG_PER_CPU_MAPS
+	WARN_ON_ONCE(cpu >= nr_cpumask_bits);
+#endif /* CONFIG_DEBUG_PER_CPU_MAPS */
 	return cpu;
 }
 

@@ -364,9 +364,9 @@ int hfi1_create_ctxtdata(struct hfi1_pportdata *ppd, int numa,
 		hfi1_exp_tid_group_init(rcd);
 		rcd->ppd = ppd;
 		rcd->dd = dd;
+		__set_bit(0, rcd->in_use_ctxts);
 		rcd->numa_id = numa;
 		rcd->rcv_array_groups = dd->rcv_entries.ngroups;
-		rcd->rhf_rcv_function_map = normal_rhf_rcv_functions;
 
 		mutex_init(&rcd->exp_mutex);
 
@@ -404,8 +404,6 @@ int hfi1_create_ctxtdata(struct hfi1_pportdata *ppd, int numa,
 
 		rcd->rcvhdrq_cnt = rcvhdrcnt;
 		rcd->rcvhdrqentsize = hfi1_hdrq_entsize;
-		rcd->rhf_offset =
-			rcd->rcvhdrqentsize - sizeof(u64) / sizeof(u32);
 		/*
 		 * Simple Eager buffer allocation: we have already pre-allocated
 		 * the number of RcvArray entry groups. Each ctxtdata structure
@@ -855,6 +853,24 @@ int hfi1_init(struct hfi1_devdata *dd, int reinit)
 	struct hfi1_ctxtdata *rcd;
 	struct hfi1_pportdata *ppd;
 
+	/* Set up recv low level handlers */
+	dd->normal_rhf_rcv_functions[RHF_RCV_TYPE_EXPECTED] =
+						kdeth_process_expected;
+	dd->normal_rhf_rcv_functions[RHF_RCV_TYPE_EAGER] =
+						kdeth_process_eager;
+	dd->normal_rhf_rcv_functions[RHF_RCV_TYPE_IB] = process_receive_ib;
+	dd->normal_rhf_rcv_functions[RHF_RCV_TYPE_ERROR] =
+						process_receive_error;
+	dd->normal_rhf_rcv_functions[RHF_RCV_TYPE_BYPASS] =
+						process_receive_bypass;
+	dd->normal_rhf_rcv_functions[RHF_RCV_TYPE_INVALID5] =
+						process_receive_invalid;
+	dd->normal_rhf_rcv_functions[RHF_RCV_TYPE_INVALID6] =
+						process_receive_invalid;
+	dd->normal_rhf_rcv_functions[RHF_RCV_TYPE_INVALID7] =
+						process_receive_invalid;
+	dd->rhf_rcv_function_map = dd->normal_rhf_rcv_functions;
+
 	/* Set up send low level handlers */
 	dd->process_pio_send = hfi1_verbs_send_pio;
 	dd->process_dma_send = hfi1_verbs_send_dma;
@@ -920,7 +936,7 @@ int hfi1_init(struct hfi1_devdata *dd, int reinit)
 	}
 
 	/* Allocate enough memory for user event notification. */
-	len = PAGE_ALIGN(chip_rcv_contexts(dd) * HFI1_MAX_SHARED_CTXTS *
+	len = PAGE_ALIGN(dd->chip_rcv_contexts * HFI1_MAX_SHARED_CTXTS *
 			 sizeof(*dd->events));
 	dd->events = vmalloc_user(len);
 	if (!dd->events)
@@ -932,6 +948,9 @@ int hfi1_init(struct hfi1_devdata *dd, int reinit)
 	dd->status = vmalloc_user(PAGE_SIZE);
 	if (!dd->status)
 		dd_dev_err(dd, "Failed to allocate dev status page\n");
+	else
+		dd->freezelen = PAGE_SIZE - (sizeof(*dd->status) -
+					     sizeof(dd->status->freezemsg));
 	for (pidx = 0; pidx < dd->num_pports; ++pidx) {
 		ppd = dd->pport + pidx;
 		if (dd->status)
@@ -1125,7 +1144,7 @@ void hfi1_free_ctxtdata(struct hfi1_devdata *dd, struct hfi1_ctxtdata *rcd)
 		return;
 
 	if (rcd->rcvhdrq) {
-		dma_free_coherent(&dd->pcidev->dev, rcvhdrq_size(rcd),
+		dma_free_coherent(&dd->pcidev->dev, rcd->rcvhdrq_size,
 				  rcd->rcvhdrq, rcd->rcvhdrq_dma);
 		rcd->rcvhdrq = NULL;
 		if (rcd->rcvhdrtail_kvaddr) {
@@ -1836,7 +1855,12 @@ int hfi1_create_rcvhdrq(struct hfi1_devdata *dd, struct hfi1_ctxtdata *rcd)
 	if (!rcd->rcvhdrq) {
 		gfp_t gfp_flags;
 
-		amt = rcvhdrq_size(rcd);
+		/*
+		 * rcvhdrqentsize is in DWs, so we have to convert to bytes
+		 * (* sizeof(u32)).
+		 */
+		amt = PAGE_ALIGN(rcd->rcvhdrq_cnt * rcd->rcvhdrqentsize *
+				 sizeof(u32));
 
 		if (rcd->ctxt < dd->first_dyn_alloc_ctxt || rcd->is_vnic)
 			gfp_flags = GFP_KERNEL;
@@ -1861,6 +1885,8 @@ int hfi1_create_rcvhdrq(struct hfi1_devdata *dd, struct hfi1_ctxtdata *rcd)
 			if (!rcd->rcvhdrtail_kvaddr)
 				goto bail_free;
 		}
+
+		rcd->rcvhdrq_size = amt;
 	}
 	/*
 	 * These values are per-context:
@@ -1876,7 +1902,7 @@ int hfi1_create_rcvhdrq(struct hfi1_devdata *dd, struct hfi1_ctxtdata *rcd)
 			& RCV_HDR_ENT_SIZE_ENT_SIZE_MASK)
 		<< RCV_HDR_ENT_SIZE_ENT_SIZE_SHIFT;
 	write_kctxt_csr(dd, rcd->ctxt, RCV_HDR_ENT_SIZE, reg);
-	reg = ((u64)DEFAULT_RCVHDRSIZE & RCV_HDR_SIZE_HDR_SIZE_MASK)
+	reg = (dd->rcvhdrsize & RCV_HDR_SIZE_HDR_SIZE_MASK)
 		<< RCV_HDR_SIZE_HDR_SIZE_SHIFT;
 	write_kctxt_csr(dd, rcd->ctxt, RCV_HDR_SIZE, reg);
 
@@ -1912,9 +1938,9 @@ bail:
 int hfi1_setup_eagerbufs(struct hfi1_ctxtdata *rcd)
 {
 	struct hfi1_devdata *dd = rcd->dd;
-	u32 max_entries, egrtop, alloced_bytes = 0;
+	u32 max_entries, egrtop, alloced_bytes = 0, idx = 0;
 	gfp_t gfp_flags;
-	u16 order, idx = 0;
+	u16 order;
 	int ret = 0;
 	u16 round_mtu = roundup_pow_of_two(hfi1_max_mtu);
 

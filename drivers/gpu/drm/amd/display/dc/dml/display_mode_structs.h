@@ -64,9 +64,10 @@ struct _vcs_dpi_voltage_scaling_st {
 	double dscclk_mhz;
 	double dcfclk_mhz;
 	double socclk_mhz;
-	double dram_speed_mts;
+	double dram_speed_mhz;
 	double fabricclk_mhz;
 	double dispclk_mhz;
+	double dram_bw_per_chan_gbps;
 	double phyclk_mhz;
 	double dppclk_mhz;
 };

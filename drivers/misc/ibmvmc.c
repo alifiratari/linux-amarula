@@ -273,7 +273,7 @@ static void *alloc_dma_buffer(struct vio_dev *vdev, size_t size,
 			      dma_addr_t *dma_handle)
 {
 	/* allocate memory */
-	void *buffer = kzalloc(size, GFP_ATOMIC);
+	void *buffer = kzalloc(size, GFP_KERNEL);
 
 	if (!buffer) {
 		*dma_handle = 0;

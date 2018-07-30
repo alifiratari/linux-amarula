@@ -36,7 +36,6 @@
 #include <linux/list.h>
 #include <net/arp.h>
 #include <net/gre.h>
-#include <net/lag.h>
 #include <net/ndisc.h>
 #include <net/ip6_tunnel.h>
 
@@ -255,9 +254,7 @@ mlxsw_sp_span_entry_lag(struct net_device *lag_dev)
 	struct list_head *iter;
 
 	netdev_for_each_lower_dev(lag_dev, dev, iter)
-		if (netif_carrier_ok(dev) &&
-		    net_lag_port_dev_txable(dev) &&
-		    mlxsw_sp_port_dev_check(dev))
+		if ((dev->flags & IFF_UP) && mlxsw_sp_port_dev_check(dev))
 			return dev;
 
 	return NULL;

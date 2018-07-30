@@ -278,8 +278,7 @@ static struct vfsmount *try_location(struct nfs_clone_mount *mountdata,
 				mountdata->hostname,
 				mountdata->mnt_path);
 
-		mnt = vfs_submount(mountdata->dentry, &nfs4_referral_fs_type, page,
-				   mountdata, 0);
+		mnt = vfs_submount(mountdata->dentry, &nfs4_referral_fs_type, page, mountdata);
 		if (!IS_ERR(mnt))
 			break;
 	}

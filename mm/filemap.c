@@ -36,8 +36,6 @@
 #include <linux/cleancache.h>
 #include <linux/shmem_fs.h>
 #include <linux/rmap.h>
-#include <linux/delayacct.h>
-#include <linux/psi.h>
 #include "internal.h"
 
 #define CREATE_TRACE_POINTS
@@ -113,26 +111,60 @@
  *   ->tasklist_lock            (memory_failure, collect_procs_ao)
  */
 
-static void page_cache_delete(struct address_space *mapping,
+static int page_cache_tree_insert(struct address_space *mapping,
+				  struct page *page, void **shadowp)
+{
+	struct radix_tree_node *node;
+	void **slot;
+	int error;
+
+	error = __radix_tree_create(&mapping->i_pages, page->index, 0,
+				    &node, &slot);
+	if (error)
+		return error;
+	if (*slot) {
+		void *p;
+
+		p = radix_tree_deref_slot_protected(slot,
+						    &mapping->i_pages.xa_lock);
+		if (!radix_tree_exceptional_entry(p))
+			return -EEXIST;
+
+		mapping->nrexceptional--;
+		if (shadowp)
+			*shadowp = p;
+	}
+	__radix_tree_replace(&mapping->i_pages, node, slot, page,
+			     workingset_lookup_update(mapping));
+	mapping->nrpages++;
+	return 0;
+}
+
+static void page_cache_tree_delete(struct address_space *mapping,
 				   struct page *page, void *shadow)
 {
-	XA_STATE(xas, &mapping->i_pages, page->index);
-	unsigned int nr = 1;
+	int i, nr;
 
-	mapping_set_update(&xas, mapping);
-
-	/* hugetlb pages are represented by a single entry in the xarray */
-	if (!PageHuge(page)) {
-		xas_set_order(&xas, page->index, compound_order(page));
-		nr = 1U << compound_order(page);
-	}
+	/* hugetlb pages are represented by one entry in the radix tree */
+	nr = PageHuge(page) ? 1 : hpage_nr_pages(page);
 
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
 	VM_BUG_ON_PAGE(PageTail(page), page);
 	VM_BUG_ON_PAGE(nr != 1 && shadow, page);
 
-	xas_store(&xas, shadow);
-	xas_init_tags(&xas);
+	for (i = 0; i < nr; i++) {
+		struct radix_tree_node *node;
+		void **slot;
+
+		__radix_tree_lookup(&mapping->i_pages, page->index + i,
+				    &node, &slot);
+
+		VM_BUG_ON_PAGE(!node && nr != 1, page);
+
+		radix_tree_clear_tags(&mapping->i_pages, node, slot);
+		__radix_tree_replace(&mapping->i_pages, node, slot, shadow,
+				workingset_lookup_update(mapping));
+	}
 
 	page->mapping = NULL;
 	/* Leave page->index set: truncation lookup relies upon it */
@@ -231,7 +263,7 @@ void __delete_from_page_cache(struct page *page, void *shadow)
 	trace_mm_filemap_delete_from_page_cache(page);
 
 	unaccount_page_cache_page(mapping, page);
-	page_cache_delete(mapping, page, shadow);
+	page_cache_tree_delete(mapping, page, shadow);
 }
 
 static void page_cache_free_page(struct address_space *mapping,
@@ -274,7 +306,7 @@ void delete_from_page_cache(struct page *page)
 EXPORT_SYMBOL(delete_from_page_cache);
 
 /*
- * page_cache_delete_batch - delete several pages from page cache
+ * page_cache_tree_delete_batch - delete several pages from page cache
  * @mapping: the mapping to which pages belong
  * @pvec: pagevec with pages to delete
  *
@@ -287,19 +319,24 @@ EXPORT_SYMBOL(delete_from_page_cache);
  *
  * The function expects the i_pages lock to be held.
  */
-static void page_cache_delete_batch(struct address_space *mapping,
+static void
+page_cache_tree_delete_batch(struct address_space *mapping,
 			     struct pagevec *pvec)
 {
-	XA_STATE(xas, &mapping->i_pages, pvec->pages[0]->index);
+	struct radix_tree_iter iter;
+	void **slot;
 	int total_pages = 0;
 	int i = 0, tail_pages = 0;
 	struct page *page;
+	pgoff_t start;
 
-	mapping_set_update(&xas, mapping);
-	xas_for_each(&xas, page, ULONG_MAX) {
+	start = pvec->pages[0]->index;
+	radix_tree_for_each_slot(slot, &mapping->i_pages, &iter, start) {
 		if (i >= pagevec_count(pvec) && !tail_pages)
 			break;
-		if (xa_is_value(page))
+		page = radix_tree_deref_slot_protected(slot,
+						       &mapping->i_pages.xa_lock);
+		if (radix_tree_exceptional_entry(page))
 			continue;
 		if (!tail_pages) {
 			/*
@@ -307,11 +344,8 @@ static void page_cache_delete_batch(struct address_space *mapping,
 			 * have our pages locked so they are protected from
 			 * being removed.
 			 */
-			if (page != pvec->pages[i]) {
-				VM_BUG_ON_PAGE(page->index >
-						pvec->pages[i]->index, page);
+			if (page != pvec->pages[i])
 				continue;
-			}
 			WARN_ON_ONCE(!PageLocked(page));
 			if (PageTransHuge(page) && !PageHuge(page))
 				tail_pages = HPAGE_PMD_NR - 1;
@@ -322,11 +356,11 @@ static void page_cache_delete_batch(struct address_space *mapping,
 			 */
 			i++;
 		} else {
-			VM_BUG_ON_PAGE(page->index + HPAGE_PMD_NR - tail_pages
-					!= pvec->pages[i]->index, page);
 			tail_pages--;
 		}
-		xas_store(&xas, NULL);
+		radix_tree_clear_tags(&mapping->i_pages, iter.node, slot);
+		__radix_tree_replace(&mapping->i_pages, iter.node, slot, NULL,
+				workingset_lookup_update(mapping));
 		total_pages++;
 	}
 	mapping->nrpages -= total_pages;
@@ -347,7 +381,7 @@ void delete_from_page_cache_batch(struct address_space *mapping,
 
 		unaccount_page_cache_page(mapping, pvec->pages[i]);
 	}
-	page_cache_delete_batch(mapping, pvec);
+	page_cache_tree_delete_batch(mapping, pvec);
 	xa_unlock_irqrestore(&mapping->i_pages, flags);
 
 	for (i = 0; i < pagevec_count(pvec); i++)
@@ -457,31 +491,20 @@ EXPORT_SYMBOL(filemap_flush);
 bool filemap_range_has_page(struct address_space *mapping,
 			   loff_t start_byte, loff_t end_byte)
 {
+	pgoff_t index = start_byte >> PAGE_SHIFT;
+	pgoff_t end = end_byte >> PAGE_SHIFT;
 	struct page *page;
-	XA_STATE(xas, &mapping->i_pages, start_byte >> PAGE_SHIFT);
-	pgoff_t max = end_byte >> PAGE_SHIFT;
 
 	if (end_byte < start_byte)
 		return false;
 
-	rcu_read_lock();
-	for (;;) {
-		page = xas_find(&xas, max);
-		if (xas_retry(&xas, page))
-			continue;
-		/* Shadow entries don't count */
-		if (xa_is_value(page))
-			continue;
-		/*
-		 * We don't need to try to pin this page; we're about to
-		 * release the RCU lock anyway.  It is enough to know that
-		 * there was a page here recently.
-		 */
-		break;
-	}
-	rcu_read_unlock();
+	if (mapping->nrpages == 0)
+		return false;
 
-	return page != NULL;
+	if (!find_get_pages_range(mapping, &index, end, 1, &page))
+		return false;
+	put_page(page);
+	return true;
 }
 EXPORT_SYMBOL(filemap_range_has_page);
 
@@ -752,44 +775,51 @@ EXPORT_SYMBOL(file_write_and_wait_range);
  * locked.  This function does not add the new page to the LRU, the
  * caller must do that.
  *
- * The remove + add is atomic.  This function cannot fail.
+ * The remove + add is atomic.  The only way this function can fail is
+ * memory allocation failure.
  */
 int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
 {
-	struct address_space *mapping = old->mapping;
-	void (*freepage)(struct page *) = mapping->a_ops->freepage;
-	pgoff_t offset = old->index;
-	XA_STATE(xas, &mapping->i_pages, offset);
-	unsigned long flags;
+	int error;
 
 	VM_BUG_ON_PAGE(!PageLocked(old), old);
 	VM_BUG_ON_PAGE(!PageLocked(new), new);
 	VM_BUG_ON_PAGE(new->mapping, new);
 
-	get_page(new);
-	new->mapping = mapping;
-	new->index = offset;
+	error = radix_tree_preload(gfp_mask & GFP_RECLAIM_MASK);
+	if (!error) {
+		struct address_space *mapping = old->mapping;
+		void (*freepage)(struct page *);
+		unsigned long flags;
 
-	xas_lock_irqsave(&xas, flags);
-	xas_store(&xas, new);
+		pgoff_t offset = old->index;
+		freepage = mapping->a_ops->freepage;
 
-	old->mapping = NULL;
-	/* hugetlb pages do not participate in page cache accounting. */
-	if (!PageHuge(old))
-		__dec_node_page_state(new, NR_FILE_PAGES);
-	if (!PageHuge(new))
-		__inc_node_page_state(new, NR_FILE_PAGES);
-	if (PageSwapBacked(old))
-		__dec_node_page_state(new, NR_SHMEM);
-	if (PageSwapBacked(new))
-		__inc_node_page_state(new, NR_SHMEM);
-	xas_unlock_irqrestore(&xas, flags);
-	mem_cgroup_migrate(old, new);
-	if (freepage)
-		freepage(old);
-	put_page(old);
+		get_page(new);
+		new->mapping = mapping;
+		new->index = offset;
 
-	return 0;
+		xa_lock_irqsave(&mapping->i_pages, flags);
+		__delete_from_page_cache(old, NULL);
+		error = page_cache_tree_insert(mapping, new, NULL);
+		BUG_ON(error);
+
+		/*
+		 * hugetlb pages do not participate in page cache accounting.
+		 */
+		if (!PageHuge(new))
+			__inc_node_page_state(new, NR_FILE_PAGES);
+		if (PageSwapBacked(new))
+			__inc_node_page_state(new, NR_SHMEM);
+		xa_unlock_irqrestore(&mapping->i_pages, flags);
+		mem_cgroup_migrate(old, new);
+		radix_tree_preload_end();
+		if (freepage)
+			freepage(old);
+		put_page(old);
+	}
+
+	return error;
 }
 EXPORT_SYMBOL_GPL(replace_page_cache_page);
 
@@ -798,15 +828,12 @@ static int __add_to_page_cache_locked(struct page *page,
 				      pgoff_t offset, gfp_t gfp_mask,
 				      void **shadowp)
 {
-	XA_STATE(xas, &mapping->i_pages, offset);
 	int huge = PageHuge(page);
 	struct mem_cgroup *memcg;
 	int error;
-	void *old;
 
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
 	VM_BUG_ON_PAGE(PageSwapBacked(page), page);
-	mapping_set_update(&xas, mapping);
 
 	if (!huge) {
 		error = mem_cgroup_try_charge(page, current->mm,
@@ -815,47 +842,39 @@ static int __add_to_page_cache_locked(struct page *page,
 			return error;
 	}
 
+	error = radix_tree_maybe_preload(gfp_mask & GFP_RECLAIM_MASK);
+	if (error) {
+		if (!huge)
+			mem_cgroup_cancel_charge(page, memcg, false);
+		return error;
+	}
+
 	get_page(page);
 	page->mapping = mapping;
 	page->index = offset;
 
-	do {
-		xas_lock_irq(&xas);
-		old = xas_load(&xas);
-		if (old && !xa_is_value(old))
-			xas_set_err(&xas, -EEXIST);
-		xas_store(&xas, page);
-		if (xas_error(&xas))
-			goto unlock;
+	xa_lock_irq(&mapping->i_pages);
+	error = page_cache_tree_insert(mapping, page, shadowp);
+	radix_tree_preload_end();
+	if (unlikely(error))
+		goto err_insert;
 
-		if (xa_is_value(old)) {
-			mapping->nrexceptional--;
-			if (shadowp)
-				*shadowp = old;
-		}
-		mapping->nrpages++;
-
-		/* hugetlb pages do not participate in page cache accounting */
-		if (!huge)
-			__inc_node_page_state(page, NR_FILE_PAGES);
-unlock:
-		xas_unlock_irq(&xas);
-	} while (xas_nomem(&xas, gfp_mask & GFP_RECLAIM_MASK));
-
-	if (xas_error(&xas))
-		goto error;
-
+	/* hugetlb pages do not participate in page cache accounting. */
+	if (!huge)
+		__inc_node_page_state(page, NR_FILE_PAGES);
+	xa_unlock_irq(&mapping->i_pages);
 	if (!huge)
 		mem_cgroup_commit_charge(page, memcg, false, false);
 	trace_mm_filemap_add_to_page_cache(page);
 	return 0;
-error:
+err_insert:
 	page->mapping = NULL;
 	/* Leave page->index set: truncation relies upon it */
+	xa_unlock_irq(&mapping->i_pages);
 	if (!huge)
 		mem_cgroup_cancel_charge(page, memcg, false);
 	put_page(page);
-	return xas_error(&xas);
+	return error;
 }
 
 /**
@@ -896,9 +915,12 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 		 * data from the working set, only to cache data that will
 		 * get overwritten with something else, is a waste of memory.
 		 */
-		WARN_ON_ONCE(PageActive(page));
-		if (!(gfp_mask & __GFP_WRITE) && shadow)
-			workingset_refault(page, shadow);
+		if (!(gfp_mask & __GFP_WRITE) &&
+		    shadow && workingset_refault(shadow)) {
+			SetPageActive(page);
+			workingset_activation(page);
+		} else
+			ClearPageActive(page);
 		lru_cache_add(page);
 	}
 	return ret;
@@ -1054,17 +1076,7 @@ static inline int wait_on_page_bit_common(wait_queue_head_t *q,
 {
 	struct wait_page_queue wait_page;
 	wait_queue_entry_t *wait = &wait_page.wait;
-	bool thrashing = false;
-	unsigned long pflags;
 	int ret = 0;
-
-	if (bit_nr == PG_locked &&
-	    !PageUptodate(page) && PageWorkingset(page)) {
-		if (!PageSwapBacked(page))
-			delayacct_thrashing_start();
-		psi_memstall_enter(&pflags);
-		thrashing = true;
-	}
 
 	init_wait(wait);
 	wait->flags = lock ? WQ_FLAG_EXCLUSIVE : 0;
@@ -1103,12 +1115,6 @@ static inline int wait_on_page_bit_common(wait_queue_head_t *q,
 	}
 
 	finish_wait(q, wait);
-
-	if (thrashing) {
-		if (!PageSwapBacked(page))
-			delayacct_thrashing_end();
-		psi_memstall_leave(&pflags);
-	}
 
 	/*
 	 * A signal could leave PageWaiters set. Clearing it here if
@@ -1320,76 +1326,86 @@ int __lock_page_or_retry(struct page *page, struct mm_struct *mm,
 }
 
 /**
- * page_cache_next_gap() - Find the next gap in the page cache.
- * @mapping: Mapping.
- * @index: Index.
- * @max_scan: Maximum range to search.
+ * page_cache_next_hole - find the next hole (not-present entry)
+ * @mapping: mapping
+ * @index: index
+ * @max_scan: maximum range to search
  *
- * Search the range [index, min(index + max_scan - 1, ULONG_MAX)] for the
- * gap with the lowest index.
+ * Search the set [index, min(index+max_scan-1, MAX_INDEX)] for the
+ * lowest indexed hole.
  *
- * This function may be called under the rcu_read_lock.  However, this will
- * not atomically search a snapshot of the cache at a single point in time.
- * For example, if a gap is created at index 5, then subsequently a gap is
- * created at index 10, page_cache_next_gap covering both indices may
- * return 10 if called under the rcu_read_lock.
+ * Returns: the index of the hole if found, otherwise returns an index
+ * outside of the set specified (in which case 'return - index >=
+ * max_scan' will be true). In rare cases of index wrap-around, 0 will
+ * be returned.
  *
- * Return: The index of the gap if found, otherwise an index outside the
- * range specified (in which case 'return - index >= max_scan' will be true).
- * In the rare case of index wrap-around, 0 will be returned.
+ * page_cache_next_hole may be called under rcu_read_lock. However,
+ * like radix_tree_gang_lookup, this will not atomically search a
+ * snapshot of the tree at a single point in time. For example, if a
+ * hole is created at index 5, then subsequently a hole is created at
+ * index 10, page_cache_next_hole covering both indexes may return 10
+ * if called under rcu_read_lock.
  */
-pgoff_t page_cache_next_gap(struct address_space *mapping,
+pgoff_t page_cache_next_hole(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan)
 {
-	XA_STATE(xas, &mapping->i_pages, index);
+	unsigned long i;
 
-	while (max_scan--) {
-		void *entry = xas_next(&xas);
-		if (!entry || xa_is_value(entry))
+	for (i = 0; i < max_scan; i++) {
+		struct page *page;
+
+		page = radix_tree_lookup(&mapping->i_pages, index);
+		if (!page || radix_tree_exceptional_entry(page))
 			break;
-		if (xas.xa_index == 0)
+		index++;
+		if (index == 0)
 			break;
 	}
 
-	return xas.xa_index;
+	return index;
 }
-EXPORT_SYMBOL(page_cache_next_gap);
+EXPORT_SYMBOL(page_cache_next_hole);
 
 /**
- * page_cache_prev_gap() - Find the next gap in the page cache.
- * @mapping: Mapping.
- * @index: Index.
- * @max_scan: Maximum range to search.
+ * page_cache_prev_hole - find the prev hole (not-present entry)
+ * @mapping: mapping
+ * @index: index
+ * @max_scan: maximum range to search
  *
- * Search the range [max(index - max_scan + 1, 0), index] for the
- * gap with the highest index.
+ * Search backwards in the range [max(index-max_scan+1, 0), index] for
+ * the first hole.
  *
- * This function may be called under the rcu_read_lock.  However, this will
- * not atomically search a snapshot of the cache at a single point in time.
- * For example, if a gap is created at index 10, then subsequently a gap is
- * created at index 5, page_cache_prev_gap() covering both indices may
- * return 5 if called under the rcu_read_lock.
+ * Returns: the index of the hole if found, otherwise returns an index
+ * outside of the set specified (in which case 'index - return >=
+ * max_scan' will be true). In rare cases of wrap-around, ULONG_MAX
+ * will be returned.
  *
- * Return: The index of the gap if found, otherwise an index outside the
- * range specified (in which case 'index - return >= max_scan' will be true).
- * In the rare case of wrap-around, ULONG_MAX will be returned.
+ * page_cache_prev_hole may be called under rcu_read_lock. However,
+ * like radix_tree_gang_lookup, this will not atomically search a
+ * snapshot of the tree at a single point in time. For example, if a
+ * hole is created at index 10, then subsequently a hole is created at
+ * index 5, page_cache_prev_hole covering both indexes may return 5 if
+ * called under rcu_read_lock.
  */
-pgoff_t page_cache_prev_gap(struct address_space *mapping,
+pgoff_t page_cache_prev_hole(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan)
 {
-	XA_STATE(xas, &mapping->i_pages, index);
+	unsigned long i;
 
-	while (max_scan--) {
-		void *entry = xas_prev(&xas);
-		if (!entry || xa_is_value(entry))
+	for (i = 0; i < max_scan; i++) {
+		struct page *page;
+
+		page = radix_tree_lookup(&mapping->i_pages, index);
+		if (!page || radix_tree_exceptional_entry(page))
 			break;
-		if (xas.xa_index == ULONG_MAX)
+		index--;
+		if (index == ULONG_MAX)
 			break;
 	}
 
-	return xas.xa_index;
+	return index;
 }
-EXPORT_SYMBOL(page_cache_prev_gap);
+EXPORT_SYMBOL(page_cache_prev_hole);
 
 /**
  * find_get_entry - find and get a page cache entry
@@ -1406,40 +1422,47 @@ EXPORT_SYMBOL(page_cache_prev_gap);
  */
 struct page *find_get_entry(struct address_space *mapping, pgoff_t offset)
 {
-	XA_STATE(xas, &mapping->i_pages, offset);
+	void **pagep;
 	struct page *head, *page;
 
 	rcu_read_lock();
 repeat:
-	xas_reset(&xas);
-	page = xas_load(&xas);
-	if (xas_retry(&xas, page))
-		goto repeat;
-	/*
-	 * A shadow entry of a recently evicted page, or a swap entry from
-	 * shmem/tmpfs.  Return it without attempting to raise page count.
-	 */
-	if (!page || xa_is_value(page))
-		goto out;
+	page = NULL;
+	pagep = radix_tree_lookup_slot(&mapping->i_pages, offset);
+	if (pagep) {
+		page = radix_tree_deref_slot(pagep);
+		if (unlikely(!page))
+			goto out;
+		if (radix_tree_exception(page)) {
+			if (radix_tree_deref_retry(page))
+				goto repeat;
+			/*
+			 * A shadow entry of a recently evicted page,
+			 * or a swap entry from shmem/tmpfs.  Return
+			 * it without attempting to raise page count.
+			 */
+			goto out;
+		}
 
-	head = compound_head(page);
-	if (!page_cache_get_speculative(head))
-		goto repeat;
+		head = compound_head(page);
+		if (!page_cache_get_speculative(head))
+			goto repeat;
 
-	/* The page was split under us? */
-	if (compound_head(page) != head) {
-		put_page(head);
-		goto repeat;
-	}
+		/* The page was split under us? */
+		if (compound_head(page) != head) {
+			put_page(head);
+			goto repeat;
+		}
 
-	/*
-	 * Has the page moved?
-	 * This is part of the lockless pagecache protocol. See
-	 * include/linux/pagemap.h for details.
-	 */
-	if (unlikely(page != xas_reload(&xas))) {
-		put_page(head);
-		goto repeat;
+		/*
+		 * Has the page moved?
+		 * This is part of the lockless pagecache protocol. See
+		 * include/linux/pagemap.h for details.
+		 */
+		if (unlikely(page != *pagep)) {
+			put_page(head);
+			goto repeat;
+		}
 	}
 out:
 	rcu_read_unlock();
@@ -1470,7 +1493,7 @@ struct page *find_lock_entry(struct address_space *mapping, pgoff_t offset)
 
 repeat:
 	page = find_get_entry(mapping, offset);
-	if (page && !xa_is_value(page)) {
+	if (page && !radix_tree_exception(page)) {
 		lock_page(page);
 		/* Has the page been truncated? */
 		if (unlikely(page_mapping(page) != mapping)) {
@@ -1516,7 +1539,7 @@ struct page *pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 
 repeat:
 	page = find_get_entry(mapping, offset);
-	if (xa_is_value(page))
+	if (radix_tree_exceptional_entry(page))
 		page = NULL;
 	if (!page)
 		goto no_page;
@@ -1602,48 +1625,53 @@ unsigned find_get_entries(struct address_space *mapping,
 			  pgoff_t start, unsigned int nr_entries,
 			  struct page **entries, pgoff_t *indices)
 {
-	XA_STATE(xas, &mapping->i_pages, start);
-	struct page *page;
+	void **slot;
 	unsigned int ret = 0;
+	struct radix_tree_iter iter;
 
 	if (!nr_entries)
 		return 0;
 
 	rcu_read_lock();
-	xas_for_each(&xas, page, ULONG_MAX) {
-		struct page *head;
-		if (xas_retry(&xas, page))
+	radix_tree_for_each_slot(slot, &mapping->i_pages, &iter, start) {
+		struct page *head, *page;
+repeat:
+		page = radix_tree_deref_slot(slot);
+		if (unlikely(!page))
 			continue;
-		/*
-		 * A shadow entry of a recently evicted page, a swap
-		 * entry from shmem/tmpfs or a DAX entry.  Return it
-		 * without attempting to raise page count.
-		 */
-		if (xa_is_value(page))
+		if (radix_tree_exception(page)) {
+			if (radix_tree_deref_retry(page)) {
+				slot = radix_tree_iter_retry(&iter);
+				continue;
+			}
+			/*
+			 * A shadow entry of a recently evicted page, a swap
+			 * entry from shmem/tmpfs or a DAX entry.  Return it
+			 * without attempting to raise page count.
+			 */
 			goto export;
+		}
 
 		head = compound_head(page);
 		if (!page_cache_get_speculative(head))
-			goto retry;
+			goto repeat;
 
 		/* The page was split under us? */
-		if (compound_head(page) != head)
-			goto put_page;
+		if (compound_head(page) != head) {
+			put_page(head);
+			goto repeat;
+		}
 
 		/* Has the page moved? */
-		if (unlikely(page != xas_reload(&xas)))
-			goto put_page;
-
+		if (unlikely(page != *slot)) {
+			put_page(head);
+			goto repeat;
+		}
 export:
-		indices[ret] = xas.xa_index;
+		indices[ret] = iter.index;
 		entries[ret] = page;
 		if (++ret == nr_entries)
 			break;
-		continue;
-put_page:
-		put_page(head);
-retry:
-		xas_reset(&xas);
 	}
 	rcu_read_unlock();
 	return ret;
@@ -1674,50 +1702,64 @@ unsigned find_get_pages_range(struct address_space *mapping, pgoff_t *start,
 			      pgoff_t end, unsigned int nr_pages,
 			      struct page **pages)
 {
-	XA_STATE(xas, &mapping->i_pages, *start);
-	struct page *page;
+	struct radix_tree_iter iter;
+	void **slot;
 	unsigned ret = 0;
 
 	if (unlikely(!nr_pages))
 		return 0;
 
 	rcu_read_lock();
-	xas_for_each(&xas, page, end) {
-		struct page *head;
-		if (xas_retry(&xas, page))
+	radix_tree_for_each_slot(slot, &mapping->i_pages, &iter, *start) {
+		struct page *head, *page;
+
+		if (iter.index > end)
+			break;
+repeat:
+		page = radix_tree_deref_slot(slot);
+		if (unlikely(!page))
 			continue;
-		/* Skip over shadow, swap and DAX entries */
-		if (xa_is_value(page))
+
+		if (radix_tree_exception(page)) {
+			if (radix_tree_deref_retry(page)) {
+				slot = radix_tree_iter_retry(&iter);
+				continue;
+			}
+			/*
+			 * A shadow entry of a recently evicted page,
+			 * or a swap entry from shmem/tmpfs.  Skip
+			 * over it.
+			 */
 			continue;
+		}
 
 		head = compound_head(page);
 		if (!page_cache_get_speculative(head))
-			goto retry;
+			goto repeat;
 
 		/* The page was split under us? */
-		if (compound_head(page) != head)
-			goto put_page;
+		if (compound_head(page) != head) {
+			put_page(head);
+			goto repeat;
+		}
 
 		/* Has the page moved? */
-		if (unlikely(page != xas_reload(&xas)))
-			goto put_page;
+		if (unlikely(page != *slot)) {
+			put_page(head);
+			goto repeat;
+		}
 
 		pages[ret] = page;
 		if (++ret == nr_pages) {
-			*start = page->index + 1;
+			*start = pages[ret - 1]->index + 1;
 			goto out;
 		}
-		continue;
-put_page:
-		put_page(head);
-retry:
-		xas_reset(&xas);
 	}
 
 	/*
 	 * We come here when there is no page beyond @end. We take care to not
 	 * overflow the index @start as it confuses some of the callers. This
-	 * breaks the iteration when there is a page at index -1 but that is
+	 * breaks the iteration when there is page at index -1 but that is
 	 * already broken anyway.
 	 */
 	if (end == (pgoff_t)-1)
@@ -1745,43 +1787,57 @@ out:
 unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t index,
 			       unsigned int nr_pages, struct page **pages)
 {
-	XA_STATE(xas, &mapping->i_pages, index);
-	struct page *page;
+	struct radix_tree_iter iter;
+	void **slot;
 	unsigned int ret = 0;
 
 	if (unlikely(!nr_pages))
 		return 0;
 
 	rcu_read_lock();
-	for (page = xas_load(&xas); page; page = xas_next(&xas)) {
-		struct page *head;
-		if (xas_retry(&xas, page))
-			continue;
-		/*
-		 * If the entry has been swapped out, we can stop looking.
-		 * No current caller is looking for DAX entries.
-		 */
-		if (xa_is_value(page))
+	radix_tree_for_each_contig(slot, &mapping->i_pages, &iter, index) {
+		struct page *head, *page;
+repeat:
+		page = radix_tree_deref_slot(slot);
+		/* The hole, there no reason to continue */
+		if (unlikely(!page))
 			break;
+
+		if (radix_tree_exception(page)) {
+			if (radix_tree_deref_retry(page)) {
+				slot = radix_tree_iter_retry(&iter);
+				continue;
+			}
+			/*
+			 * A shadow entry of a recently evicted page,
+			 * or a swap entry from shmem/tmpfs.  Stop
+			 * looking for contiguous pages.
+			 */
+			break;
+		}
 
 		head = compound_head(page);
 		if (!page_cache_get_speculative(head))
-			goto retry;
+			goto repeat;
 
 		/* The page was split under us? */
-		if (compound_head(page) != head)
-			goto put_page;
+		if (compound_head(page) != head) {
+			put_page(head);
+			goto repeat;
+		}
 
 		/* Has the page moved? */
-		if (unlikely(page != xas_reload(&xas)))
-			goto put_page;
+		if (unlikely(page != *slot)) {
+			put_page(head);
+			goto repeat;
+		}
 
 		/*
 		 * must check mapping and index after taking the ref.
 		 * otherwise we can get both false positives and false
 		 * negatives, which is just confusing to the caller.
 		 */
-		if (!page->mapping || page_to_pgoff(page) != xas.xa_index) {
+		if (page->mapping == NULL || page_to_pgoff(page) != iter.index) {
 			put_page(page);
 			break;
 		}
@@ -1789,11 +1845,6 @@ unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t index,
 		pages[ret] = page;
 		if (++ret == nr_pages)
 			break;
-		continue;
-put_page:
-		put_page(head);
-retry:
-		xas_reset(&xas);
 	}
 	rcu_read_unlock();
 	return ret;
@@ -1813,58 +1864,74 @@ EXPORT_SYMBOL(find_get_pages_contig);
  * @tag.   We update @index to index the next page for the traversal.
  */
 unsigned find_get_pages_range_tag(struct address_space *mapping, pgoff_t *index,
-			pgoff_t end, xa_tag_t tag, unsigned int nr_pages,
+			pgoff_t end, int tag, unsigned int nr_pages,
 			struct page **pages)
 {
-	XA_STATE(xas, &mapping->i_pages, *index);
-	struct page *page;
+	struct radix_tree_iter iter;
+	void **slot;
 	unsigned ret = 0;
 
 	if (unlikely(!nr_pages))
 		return 0;
 
 	rcu_read_lock();
-	xas_for_each_tagged(&xas, page, end, tag) {
-		struct page *head;
-		if (xas_retry(&xas, page))
+	radix_tree_for_each_tagged(slot, &mapping->i_pages, &iter, *index, tag) {
+		struct page *head, *page;
+
+		if (iter.index > end)
+			break;
+repeat:
+		page = radix_tree_deref_slot(slot);
+		if (unlikely(!page))
 			continue;
-		/*
-		 * Shadow entries should never be tagged, but this iteration
-		 * is lockless so there is a window for page reclaim to evict
-		 * a page we saw tagged.  Skip over it.
-		 */
-		if (xa_is_value(page))
+
+		if (radix_tree_exception(page)) {
+			if (radix_tree_deref_retry(page)) {
+				slot = radix_tree_iter_retry(&iter);
+				continue;
+			}
+			/*
+			 * A shadow entry of a recently evicted page.
+			 *
+			 * Those entries should never be tagged, but
+			 * this tree walk is lockless and the tags are
+			 * looked up in bulk, one radix tree node at a
+			 * time, so there is a sizable window for page
+			 * reclaim to evict a page we saw tagged.
+			 *
+			 * Skip over it.
+			 */
 			continue;
+		}
 
 		head = compound_head(page);
 		if (!page_cache_get_speculative(head))
-			goto retry;
+			goto repeat;
 
 		/* The page was split under us? */
-		if (compound_head(page) != head)
-			goto put_page;
+		if (compound_head(page) != head) {
+			put_page(head);
+			goto repeat;
+		}
 
 		/* Has the page moved? */
-		if (unlikely(page != xas_reload(&xas)))
-			goto put_page;
+		if (unlikely(page != *slot)) {
+			put_page(head);
+			goto repeat;
+		}
 
 		pages[ret] = page;
 		if (++ret == nr_pages) {
-			*index = page->index + 1;
+			*index = pages[ret - 1]->index + 1;
 			goto out;
 		}
-		continue;
-put_page:
-		put_page(head);
-retry:
-		xas_reset(&xas);
 	}
 
 	/*
-	 * We come here when we got to @end. We take care to not overflow the
+	 * We come here when we got at @end. We take care to not overflow the
 	 * index @index as it confuses some of the callers. This breaks the
-	 * iteration when there is a page at index -1 but that is already
-	 * broken anyway.
+	 * iteration when there is page at index -1 but that is already broken
+	 * anyway.
 	 */
 	if (end == (pgoff_t)-1)
 		*index = (pgoff_t)-1;
@@ -1890,51 +1957,57 @@ EXPORT_SYMBOL(find_get_pages_range_tag);
  * @tag.
  */
 unsigned find_get_entries_tag(struct address_space *mapping, pgoff_t start,
-			xa_tag_t tag, unsigned int nr_entries,
+			int tag, unsigned int nr_entries,
 			struct page **entries, pgoff_t *indices)
 {
-	XA_STATE(xas, &mapping->i_pages, start);
-	struct page *page;
+	void **slot;
 	unsigned int ret = 0;
+	struct radix_tree_iter iter;
 
 	if (!nr_entries)
 		return 0;
 
 	rcu_read_lock();
-	xas_for_each_tagged(&xas, page, ULONG_MAX, tag) {
-		struct page *head;
-		if (xas_retry(&xas, page))
+	radix_tree_for_each_tagged(slot, &mapping->i_pages, &iter, start, tag) {
+		struct page *head, *page;
+repeat:
+		page = radix_tree_deref_slot(slot);
+		if (unlikely(!page))
 			continue;
-		/*
-		 * A shadow entry of a recently evicted page, a swap
-		 * entry from shmem/tmpfs or a DAX entry.  Return it
-		 * without attempting to raise page count.
-		 */
-		if (xa_is_value(page))
+		if (radix_tree_exception(page)) {
+			if (radix_tree_deref_retry(page)) {
+				slot = radix_tree_iter_retry(&iter);
+				continue;
+			}
+
+			/*
+			 * A shadow entry of a recently evicted page, a swap
+			 * entry from shmem/tmpfs or a DAX entry.  Return it
+			 * without attempting to raise page count.
+			 */
 			goto export;
+		}
 
 		head = compound_head(page);
 		if (!page_cache_get_speculative(head))
-			goto retry;
+			goto repeat;
 
 		/* The page was split under us? */
-		if (compound_head(page) != head)
-			goto put_page;
+		if (compound_head(page) != head) {
+			put_page(head);
+			goto repeat;
+		}
 
 		/* Has the page moved? */
-		if (unlikely(page != xas_reload(&xas)))
-			goto put_page;
-
+		if (unlikely(page != *slot)) {
+			put_page(head);
+			goto repeat;
+		}
 export:
-		indices[ret] = xas.xa_index;
+		indices[ret] = iter.index;
 		entries[ret] = page;
 		if (++ret == nr_entries)
 			break;
-		continue;
-put_page:
-		put_page(head);
-retry:
-		xas_reset(&xas);
 	}
 	rcu_read_unlock();
 	return ret;
@@ -2540,31 +2613,45 @@ EXPORT_SYMBOL(filemap_fault);
 void filemap_map_pages(struct vm_fault *vmf,
 		pgoff_t start_pgoff, pgoff_t end_pgoff)
 {
+	struct radix_tree_iter iter;
+	void **slot;
 	struct file *file = vmf->vma->vm_file;
 	struct address_space *mapping = file->f_mapping;
 	pgoff_t last_pgoff = start_pgoff;
 	unsigned long max_idx;
-	XA_STATE(xas, &mapping->i_pages, start_pgoff);
 	struct page *head, *page;
 
 	rcu_read_lock();
-	xas_for_each(&xas, page, end_pgoff) {
-		if (xas_retry(&xas, page))
-			continue;
-		if (xa_is_value(page))
+	radix_tree_for_each_slot(slot, &mapping->i_pages, &iter, start_pgoff) {
+		if (iter.index > end_pgoff)
+			break;
+repeat:
+		page = radix_tree_deref_slot(slot);
+		if (unlikely(!page))
 			goto next;
+		if (radix_tree_exception(page)) {
+			if (radix_tree_deref_retry(page)) {
+				slot = radix_tree_iter_retry(&iter);
+				continue;
+			}
+			goto next;
+		}
 
 		head = compound_head(page);
 		if (!page_cache_get_speculative(head))
-			goto next;
+			goto repeat;
 
 		/* The page was split under us? */
-		if (compound_head(page) != head)
-			goto skip;
+		if (compound_head(page) != head) {
+			put_page(head);
+			goto repeat;
+		}
 
 		/* Has the page moved? */
-		if (unlikely(page != xas_reload(&xas)))
-			goto skip;
+		if (unlikely(page != *slot)) {
+			put_page(head);
+			goto repeat;
+		}
 
 		if (!PageUptodate(page) ||
 				PageReadahead(page) ||
@@ -2583,10 +2670,10 @@ void filemap_map_pages(struct vm_fault *vmf,
 		if (file->f_ra.mmap_miss > 0)
 			file->f_ra.mmap_miss--;
 
-		vmf->address += (xas.xa_index - last_pgoff) << PAGE_SHIFT;
+		vmf->address += (iter.index - last_pgoff) << PAGE_SHIFT;
 		if (vmf->pte)
-			vmf->pte += xas.xa_index - last_pgoff;
-		last_pgoff = xas.xa_index;
+			vmf->pte += iter.index - last_pgoff;
+		last_pgoff = iter.index;
 		if (alloc_set_pte(vmf, NULL, page))
 			goto unlock;
 		unlock_page(page);
@@ -2598,6 +2685,8 @@ skip:
 next:
 		/* Huge page is mapped? No need to proceed. */
 		if (pmd_trans_huge(*vmf->pmd))
+			break;
+		if (iter.index == end_pgoff)
 			break;
 	}
 	rcu_read_unlock();
@@ -2708,7 +2797,7 @@ repeat:
 			put_page(page);
 			if (err == -EEXIST)
 				goto repeat;
-			/* Presumably ENOMEM for xarray node */
+			/* Presumably ENOMEM for radix tree node */
 			return ERR_PTR(err);
 		}
 

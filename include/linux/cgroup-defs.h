@@ -20,7 +20,6 @@
 #include <linux/u64_stats_sync.h>
 #include <linux/workqueue.h>
 #include <linux/bpf-cgroup.h>
-#include <linux/psi_types.h>
 
 #ifdef CONFIG_CGROUPS
 
@@ -82,11 +81,6 @@ enum {
 	 * Enable cpuset controller in v1 cgroup to use v2 behavior.
 	 */
 	CGRP_ROOT_CPUSET_V2_MODE = (1 << 4),
-
-	/*
-	 * Enable cgroup-aware OOM killer.
-	 */
-	CGRP_GROUP_OOM = (1 << 5),
 };
 
 /* cftype->flags */
@@ -441,14 +435,8 @@ struct cgroup {
 	/* used to schedule release agent */
 	struct work_struct release_agent_work;
 
-	/* used to track pressure stalls */
-	struct psi_group psi;
-
 	/* used to store eBPF programs */
 	struct cgroup_bpf bpf;
-
-	/* If there is block congestion on this cgroup. */
-	atomic_t congestion_count;
 
 	/* ids of the ancestors at each level including self */
 	int ancestor_ids[];

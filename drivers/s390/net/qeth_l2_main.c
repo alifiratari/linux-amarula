@@ -26,6 +26,7 @@
 
 static int qeth_l2_set_offline(struct ccwgroup_device *);
 static int qeth_l2_stop(struct net_device *);
+static void qeth_l2_set_rx_mode(struct net_device *);
 static void qeth_bridgeport_query_support(struct qeth_card *card);
 static void qeth_bridge_state_change(struct qeth_card *card,
 					struct qeth_ipa_cmd *cmd);
@@ -139,7 +140,7 @@ static int qeth_l2_send_setmac(struct qeth_card *card, __u8 *mac)
 
 static int qeth_l2_write_mac(struct qeth_card *card, u8 *mac)
 {
-	enum qeth_ipa_cmds cmd = is_multicast_ether_addr(mac) ?
+	enum qeth_ipa_cmds cmd = is_multicast_ether_addr_64bits(mac) ?
 					IPA_CMD_SETGMAC : IPA_CMD_SETVMAC;
 	int rc;
 
@@ -156,7 +157,7 @@ static int qeth_l2_write_mac(struct qeth_card *card, u8 *mac)
 
 static int qeth_l2_remove_mac(struct qeth_card *card, u8 *mac)
 {
-	enum qeth_ipa_cmds cmd = is_multicast_ether_addr(mac) ?
+	enum qeth_ipa_cmds cmd = is_multicast_ether_addr_64bits(mac) ?
 					IPA_CMD_DELGMAC : IPA_CMD_DELVMAC;
 	int rc;
 
@@ -185,12 +186,12 @@ static void qeth_l2_del_all_macs(struct qeth_card *card)
 static int qeth_l2_get_cast_type(struct qeth_card *card, struct sk_buff *skb)
 {
 	if (card->info.type == QETH_CARD_TYPE_OSN)
-		return RTN_UNICAST;
+		return RTN_UNSPEC;
 	if (is_broadcast_ether_addr(skb->data))
 		return RTN_BROADCAST;
 	if (is_multicast_ether_addr(skb->data))
 		return RTN_MULTICAST;
-	return RTN_UNICAST;
+	return RTN_UNSPEC;
 }
 
 static void qeth_l2_fill_header(struct qeth_hdr *hdr, struct sk_buff *skb,
@@ -343,6 +344,7 @@ static int qeth_l2_vlan_rx_kill_vid(struct net_device *dev,
 		rc = qeth_l2_send_setdelvlan(card, vid, IPA_CMD_DELVLAN);
 		kfree(tmpid);
 	}
+	qeth_l2_set_rx_mode(card->dev);
 	return rc;
 }
 
@@ -499,34 +501,27 @@ static int qeth_l2_set_mac_address(struct net_device *dev, void *p)
 		return -ERESTARTSYS;
 	}
 
-	/* avoid racing against concurrent state change: */
-	if (!mutex_trylock(&card->conf_mutex))
-		return -EAGAIN;
-
 	if (!qeth_card_hw_is_reachable(card)) {
 		ether_addr_copy(dev->dev_addr, addr->sa_data);
-		goto out_unlock;
+		return 0;
 	}
 
 	/* don't register the same address twice */
 	if (ether_addr_equal_64bits(dev->dev_addr, addr->sa_data) &&
 	    (card->info.mac_bits & QETH_LAYER2_MAC_REGISTERED))
-		goto out_unlock;
+		return 0;
 
 	/* add the new address, switch over, drop the old */
 	rc = qeth_l2_send_setmac(card, addr->sa_data);
 	if (rc)
-		goto out_unlock;
+		return rc;
 	ether_addr_copy(old_addr, dev->dev_addr);
 	ether_addr_copy(dev->dev_addr, addr->sa_data);
 
 	if (card->info.mac_bits & QETH_LAYER2_MAC_REGISTERED)
 		qeth_l2_remove_mac(card, old_addr);
 	card->info.mac_bits |= QETH_LAYER2_MAC_REGISTERED;
-
-out_unlock:
-	mutex_unlock(&card->conf_mutex);
-	return rc;
+	return 0;
 }
 
 static void qeth_promisc_to_bridge(struct qeth_card *card)
@@ -768,12 +763,17 @@ static netdev_tx_t qeth_l2_hard_start_xmit(struct sk_buff *skb,
 	int tx_bytes = skb->len;
 	int rc;
 
+	if (card->qdio.do_prio_queueing || (cast_type &&
+					card->info.is_multicast_different))
+		queue = card->qdio.out_qs[qeth_get_priority_queue(card, skb,
+					ipv, cast_type)];
+	else
+		queue = card->qdio.out_qs[card->qdio.default_out_queue];
+
 	if ((card->state != CARD_STATE_UP) || !card->lan_online) {
 		card->stats.tx_carrier_errors++;
 		goto tx_drop;
 	}
-
-	queue = qeth_get_tx_queue(card, skb, ipv, cast_type);
 
 	if (card->options.performance_stats) {
 		card->perf_stats.outbound_cnt++;
@@ -1112,18 +1112,20 @@ static int __qeth_l2_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 		netif_carrier_off(card->dev);
 
 	qeth_set_allowed_threads(card, 0xffffffff, 0);
-
-	qeth_enable_hw_features(card->dev);
 	if (recover_flag == CARD_STATE_RECOVER) {
 		if (recovery_mode &&
 		    card->info.type != QETH_CARD_TYPE_OSN) {
 			__qeth_l2_open(card->dev);
-			qeth_l2_set_rx_mode(card->dev);
 		} else {
 			rtnl_lock();
 			dev_open(card->dev);
 			rtnl_unlock();
 		}
+		/* this also sets saved unicast addresses */
+		qeth_l2_set_rx_mode(card->dev);
+		rtnl_lock();
+		qeth_recover_features(card->dev);
+		rtnl_unlock();
 	}
 	/* let user_space know that device is online */
 	kobject_uevent(&gdev->dev.kobj, KOBJ_CHANGE);
@@ -1869,6 +1871,7 @@ int qeth_bridgeport_query_ports(struct qeth_card *card,
 		return rc;
 	return qeth_bridgeport_makerc(card, &cbctl, IPA_SBP_QUERY_BRIDGE_PORTS);
 }
+EXPORT_SYMBOL_GPL(qeth_bridgeport_query_ports);
 
 static int qeth_bridgeport_set_cb(struct qeth_card *card,
 	struct qeth_reply *reply, unsigned long data)
@@ -2016,6 +2019,7 @@ int qeth_bridgeport_an_set(struct qeth_card *card, int enable)
 		rc = qdio_pnso_brinfo(schid, 0, &response, NULL, NULL);
 	return qeth_anset_makerc(card, rc, response);
 }
+EXPORT_SYMBOL_GPL(qeth_bridgeport_an_set);
 
 static bool qeth_bridgeport_is_in_use(struct qeth_card *card)
 {

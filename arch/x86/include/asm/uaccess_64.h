@@ -52,12 +52,7 @@ copy_to_user_mcsafe(void *to, const void *from, unsigned len)
 	unsigned long ret;
 
 	__uaccess_begin();
-	/*
-	 * Note, __memcpy_mcsafe() is explicitly used since it can
-	 * handle exceptions / faults.  memcpy_mcsafe() may fall back to
-	 * memcpy() which lacks this handling.
-	 */
-	ret = __memcpy_mcsafe(to, from, len);
+	ret = memcpy_mcsafe(to, from, len);
 	__uaccess_end();
 	return ret;
 }

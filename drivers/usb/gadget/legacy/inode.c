@@ -1990,8 +1990,7 @@ static const struct super_operations gadget_fs_operations = {
 };
 
 static int
-gadgetfs_fill_super (struct super_block *sb, void *opts, size_t data_size,
-		     int silent)
+gadgetfs_fill_super (struct super_block *sb, void *opts, int silent)
 {
 	struct inode	*inode;
 	struct dev_data	*dev;
@@ -2047,9 +2046,9 @@ Enomem:
 /* "mount -t gadgetfs path /dev/gadget" ends up here */
 static struct dentry *
 gadgetfs_mount (struct file_system_type *t, int flags,
-		const char *path, void *opts, size_t data_size)
+		const char *path, void *opts)
 {
-	return mount_single (t, flags, opts, data_size, gadgetfs_fill_super);
+	return mount_single (t, flags, opts, gadgetfs_fill_super);
 }
 
 static void

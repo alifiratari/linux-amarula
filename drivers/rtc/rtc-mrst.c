@@ -367,8 +367,10 @@ static int vrtc_mrst_do_probe(struct device *dev, struct resource *iomem,
 	}
 
 	retval = rtc_register_device(mrst_rtc.rtc);
-	if (retval)
+	if (retval) {
+		retval = PTR_ERR(mrst_rtc.rtc);
 		goto cleanup0;
+	}
 
 	dev_dbg(dev, "initialised\n");
 	return 0;

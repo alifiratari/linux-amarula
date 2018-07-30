@@ -29,8 +29,7 @@ static const struct super_operations qnx4_sops;
 
 static struct inode *qnx4_alloc_inode(struct super_block *sb);
 static void qnx4_destroy_inode(struct inode *inode);
-static int qnx4_remount(struct super_block *sb, int *flags,
-			char *data, size_t data_size);
+static int qnx4_remount(struct super_block *sb, int *flags, char *data);
 static int qnx4_statfs(struct dentry *, struct kstatfs *);
 
 static const struct super_operations qnx4_sops =
@@ -41,8 +40,7 @@ static const struct super_operations qnx4_sops =
 	.remount_fs	= qnx4_remount,
 };
 
-static int qnx4_remount(struct super_block *sb, int *flags,
-			char *data, size_t data_size)
+static int qnx4_remount(struct super_block *sb, int *flags, char *data)
 {
 	struct qnx4_sb_info *qs;
 
@@ -185,8 +183,7 @@ static const char *qnx4_checkroot(struct super_block *sb,
 	return "bitmap file not found.";
 }
 
-static int qnx4_fill_super(struct super_block *s, void *data, size_t data_size,
-			   int silent)
+static int qnx4_fill_super(struct super_block *s, void *data, int silent)
 {
 	struct buffer_head *bh;
 	struct inode *root;
@@ -386,10 +383,9 @@ static void destroy_inodecache(void)
 }
 
 static struct dentry *qnx4_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  qnx4_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, qnx4_fill_super);
 }
 
 static struct file_system_type qnx4_fs_type = {

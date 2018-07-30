@@ -68,6 +68,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 long vfs_truncate(const struct path *path, loff_t length)
 {
 	struct inode *inode;
+	struct dentry *upperdentry;
 	long error;
 
 	inode = path->dentry->d_inode;
@@ -90,7 +91,17 @@ long vfs_truncate(const struct path *path, loff_t length)
 	if (IS_APPEND(inode))
 		goto mnt_drop_write_and_out;
 
-	error = get_write_access(inode);
+	/*
+	 * If this is an overlayfs then do as if opening the file so we get
+	 * write access on the upper inode, not on the overlay inode.  For
+	 * non-overlay filesystems d_real() is an identity function.
+	 */
+	upperdentry = d_real(path->dentry, NULL, O_WRONLY, 0);
+	error = PTR_ERR(upperdentry);
+	if (IS_ERR(upperdentry))
+		goto mnt_drop_write_and_out;
+
+	error = get_write_access(upperdentry->d_inode);
 	if (error)
 		goto mnt_drop_write_and_out;
 
@@ -109,7 +120,7 @@ long vfs_truncate(const struct path *path, loff_t length)
 		error = do_truncate(path->dentry, length, 0, NULL);
 
 put_write_and_out:
-	put_write_access(inode);
+	put_write_access(upperdentry->d_inode);
 mnt_drop_write_and_out:
 	mnt_drop_write(path->mnt);
 out:
@@ -696,12 +707,12 @@ int ksys_fchown(unsigned int fd, uid_t user, gid_t group)
 	if (!f.file)
 		goto out;
 
-	error = mnt_want_write_file(f.file);
+	error = mnt_want_write_file_path(f.file);
 	if (error)
 		goto out_fput;
 	audit_file(f.file);
 	error = chown_common(&f.file->f_path, user, group);
-	mnt_drop_write_file(f.file);
+	mnt_drop_write_file_path(f.file);
 out_fput:
 	fdput(f);
 out:
@@ -713,6 +724,16 @@ SYSCALL_DEFINE3(fchown, unsigned int, fd, uid_t, user, gid_t, group)
 	return ksys_fchown(fd, user, group);
 }
 
+int open_check_o_direct(struct file *f)
+{
+	/* NB: we're sure to have correct a_ops only after f_op->open */
+	if (f->f_flags & O_DIRECT) {
+		if (!f->f_mapping->a_ops || !f->f_mapping->a_ops->direct_IO)
+			return -EINVAL;
+	}
+	return 0;
+}
+
 static int do_dentry_open(struct file *f,
 			  struct inode *inode,
 			  int (*open)(struct inode *, struct file *),
@@ -721,8 +742,7 @@ static int do_dentry_open(struct file *f,
 	static const struct file_operations empty_fops = {};
 	int error;
 
-	WARN_ON(f->f_mode & ~ (FMODE_NOACCOUNT | FMODE_CREATED));
-	f->f_mode |= OPEN_FMODE(f->f_flags) | FMODE_LSEEK |
+	f->f_mode = OPEN_FMODE(f->f_flags) | FMODE_LSEEK |
 				FMODE_PREAD | FMODE_PWRITE;
 
 	path_get(&f->f_path);
@@ -733,8 +753,7 @@ static int do_dentry_open(struct file *f,
 	f->f_wb_err = filemap_sample_wb_err(f->f_mapping);
 
 	if (unlikely(f->f_flags & O_PATH)) {
-		WARN_ON(f->f_mode & FMODE_NOACCOUNT);
-		f->f_mode = FMODE_PATH | FMODE_OPENED;
+		f->f_mode = FMODE_PATH;
 		f->f_op = &empty_fops;
 		return 0;
 	}
@@ -776,7 +795,6 @@ static int do_dentry_open(struct file *f,
 		if (error)
 			goto cleanup_all;
 	}
-	f->f_mode |= FMODE_OPENED;
 	if ((f->f_mode & (FMODE_READ | FMODE_WRITE)) == FMODE_READ)
 		i_readcount_inc(inode);
 	if ((f->f_mode & FMODE_READ) &&
@@ -791,18 +809,9 @@ static int do_dentry_open(struct file *f,
 
 	file_ra_state_init(&f->f_ra, f->f_mapping->host->i_mapping);
 
-	/* NB: we're sure to have correct a_ops only after f_op->open */
-	if (f->f_flags & O_DIRECT) {
-		if (!f->f_mapping->a_ops || !f->f_mapping->a_ops->direct_IO)
-			return -EINVAL;
-	}
 	return 0;
 
 cleanup_all:
-	if (unlikely(error > 0)) {
-		WARN_ON(1);
-		error = -EINVAL;
-	}
 	fops_put(f->f_op);
 	if (f->f_mode & FMODE_WRITER) {
 		put_write_access(inode);
@@ -838,13 +847,19 @@ cleanup_file:
  * Returns zero on success or -errno if the open failed.
  */
 int finish_open(struct file *file, struct dentry *dentry,
-		int (*open)(struct inode *, struct file *))
+		int (*open)(struct inode *, struct file *),
+		int *opened)
 {
-	BUG_ON(file->f_mode & FMODE_OPENED); /* once it's opened, it's opened */
+	int error;
+	BUG_ON(*opened & FILE_OPENED); /* once it's opened, it's opened */
 
 	file->f_path.dentry = dentry;
-	return do_dentry_open(file, d_backing_inode(dentry), open,
+	error = do_dentry_open(file, d_backing_inode(dentry), open,
 			       current_cred());
+	if (!error)
+		*opened |= FILE_OPENED;
+
+	return error;
 }
 EXPORT_SYMBOL(finish_open);
 
@@ -884,54 +899,43 @@ EXPORT_SYMBOL(file_path);
 int vfs_open(const struct path *path, struct file *file,
 	     const struct cred *cred)
 {
+	struct dentry *dentry = d_real(path->dentry, NULL, file->f_flags, 0);
+
+	if (IS_ERR(dentry))
+		return PTR_ERR(dentry);
+
 	file->f_path = *path;
-	return do_dentry_open(file, d_backing_inode(path->dentry), NULL, cred);
+	return do_dentry_open(file, d_backing_inode(dentry), NULL, cred);
 }
-
-/**
- * path_open() - Open an inode by a particular name.
- * @path: The name of the file.
- * @flags: The O_ flags used to open this file.
- * @inode: The inode to open.
- * @cred: The task's credentials used when opening this file.
- *
- * Context: Process context.
- * Return: A pointer to a struct file or an IS_ERR pointer.  Cannot return NULL.
- */
-struct file *path_open(const struct path *path, int flags, struct inode *inode,
-		       const struct cred *cred, bool account)
-{
-	struct file *file;
-	int error;
-
-	file = __get_empty_filp(account);
-	if (IS_ERR(file))
-		return file;
-
-	file->f_flags = flags;
-	file->f_path = *path;
-	error = do_dentry_open(file, inode, NULL, cred);
-	if (error) {
-		if (file->f_mode & FMODE_OPENED)
-			fput(file);
-		else
-			put_filp(file);
-		return ERR_PTR(error);
-	}
-
-	return file;
-}
-EXPORT_SYMBOL(path_open);
 
 struct file *dentry_open(const struct path *path, int flags,
 			 const struct cred *cred)
 {
+	int error;
+	struct file *f;
+
 	validate_creds(cred);
 
 	/* We must always pass in a valid mount pointer. */
 	BUG_ON(!path->mnt);
 
-	return path_open(path, flags, d_backing_inode(path->dentry), cred, true);
+	f = get_empty_filp();
+	if (!IS_ERR(f)) {
+		f->f_flags = flags;
+		error = vfs_open(path, f, cred);
+		if (!error) {
+			/* from now on we need fput() to dispose of f */
+			error = open_check_o_direct(f);
+			if (error) {
+				fput(f);
+				f = ERR_PTR(error);
+			}
+		} else { 
+			put_filp(f);
+			f = ERR_PTR(error);
+		}
+	}
+	return f;
 }
 EXPORT_SYMBOL(dentry_open);
 
@@ -1058,6 +1062,26 @@ struct file *file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 	return do_file_open_root(dentry, mnt, filename, &op);
 }
 EXPORT_SYMBOL(file_open_root);
+
+struct file *filp_clone_open(struct file *oldfile)
+{
+	struct file *file;
+	int retval;
+
+	file = get_empty_filp();
+	if (IS_ERR(file))
+		return file;
+
+	file->f_flags = oldfile->f_flags;
+	retval = vfs_open(&oldfile->f_path, file, oldfile->f_cred);
+	if (retval) {
+		put_filp(file);
+		return ERR_PTR(retval);
+	}
+
+	return file;
+}
+EXPORT_SYMBOL(filp_clone_open);
 
 long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 {

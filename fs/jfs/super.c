@@ -456,8 +456,7 @@ cleanup:
 	return 0;
 }
 
-static int jfs_remount(struct super_block *sb, int *flags,
-		       char *data, size_t data_size)
+static int jfs_remount(struct super_block *sb, int *flags, char *data)
 {
 	s64 newLVSize = 0;
 	int rc = 0;
@@ -517,8 +516,7 @@ static int jfs_remount(struct super_block *sb, int *flags,
 	return 0;
 }
 
-static int jfs_fill_super(struct super_block *sb, void *data, size_t data_size,
-			  int silent)
+static int jfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct jfs_sb_info *sbi;
 	struct inode *inode;
@@ -700,10 +698,9 @@ out:
 }
 
 static struct dentry *jfs_do_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  jfs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, jfs_fill_super);
 }
 
 static int jfs_sync_fs(struct super_block *sb, int wait)

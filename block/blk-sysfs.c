@@ -422,16 +422,16 @@ static ssize_t queue_poll_store(struct request_queue *q, const char *page,
 
 static ssize_t queue_wb_lat_show(struct request_queue *q, char *page)
 {
-	if (!wbt_rq_qos(q))
+	if (!q->rq_wb)
 		return -EINVAL;
 
-	return sprintf(page, "%llu\n", div_u64(wbt_get_min_lat(q), 1000));
+	return sprintf(page, "%llu\n", div_u64(q->rq_wb->min_lat_nsec, 1000));
 }
 
 static ssize_t queue_wb_lat_store(struct request_queue *q, const char *page,
 				  size_t count)
 {
-	struct rq_qos *rqos;
+	struct rq_wb *rwb;
 	ssize_t ret;
 	s64 val;
 
@@ -441,21 +441,23 @@ static ssize_t queue_wb_lat_store(struct request_queue *q, const char *page,
 	if (val < -1)
 		return -EINVAL;
 
-	rqos = wbt_rq_qos(q);
-	if (!rqos) {
+	rwb = q->rq_wb;
+	if (!rwb) {
 		ret = wbt_init(q);
 		if (ret)
 			return ret;
 	}
 
+	rwb = q->rq_wb;
 	if (val == -1)
-		val = wbt_default_latency_nsec(q);
+		rwb->min_lat_nsec = wbt_default_latency_nsec(q);
 	else if (val >= 0)
-		val *= 1000ULL;
+		rwb->min_lat_nsec = val * 1000ULL;
 
-	wbt_set_min_lat(q, val);
+	if (rwb->enable_state == WBT_STATE_ON_DEFAULT)
+		rwb->enable_state = WBT_STATE_ON_MANUAL;
 
-	wbt_update_limits(q);
+	wbt_update_limits(rwb);
 	return count;
 }
 
@@ -962,7 +964,7 @@ void blk_unregister_queue(struct gendisk *disk)
 	kobject_del(&q->kobj);
 	blk_trace_remove_sysfs(disk_to_dev(disk));
 
-	rq_qos_exit(q);
+	wbt_exit(q);
 
 	mutex_lock(&q->sysfs_lock);
 	if (q->request_fn || (q->mq_ops && q->elevator))

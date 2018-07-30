@@ -39,8 +39,7 @@ static const struct super_operations securityfs_super_operations = {
 	.evict_inode	= securityfs_evict_inode,
 };
 
-static int fill_super(struct super_block *sb, void *data, size_t data_size,
-		      int silent)
+static int fill_super(struct super_block *sb, void *data, int silent)
 {
 	static const struct tree_descr files[] = {{""}};
 	int error;
@@ -56,9 +55,9 @@ static int fill_super(struct super_block *sb, void *data, size_t data_size,
 
 static struct dentry *get_sb(struct file_system_type *fs_type,
 		  int flags, const char *dev_name,
-		  void *data, size_t data_size)
+		  void *data)
 {
-	return mount_single(fs_type, flags, data, data_size, fill_super);
+	return mount_single(fs_type, flags, data, fill_super);
 }
 
 static struct file_system_type fs_type = {

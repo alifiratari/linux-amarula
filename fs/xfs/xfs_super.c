@@ -1256,8 +1256,7 @@ STATIC int
 xfs_fs_remount(
 	struct super_block	*sb,
 	int			*flags,
-	char			*options,
-	size_t			data_size)
+	char			*options)
 {
 	struct xfs_mount	*mp = XFS_M(sb);
 	xfs_sb_t		*sbp = &mp->m_sb;
@@ -1596,7 +1595,6 @@ STATIC int
 xfs_fs_fill_super(
 	struct super_block	*sb,
 	void			*data,
-	size_t			data_size,
 	int			silent)
 {
 	struct inode		*root;
@@ -1810,11 +1808,9 @@ xfs_fs_mount(
 	struct file_system_type	*fs_type,
 	int			flags,
 	const char		*dev_name,
-	void			*data,
-	size_t			data_size)
+	void			*data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  xfs_fs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, xfs_fs_fill_super);
 }
 
 static long
@@ -1864,7 +1860,7 @@ MODULE_ALIAS_FS("xfs");
 STATIC int __init
 xfs_init_zones(void)
 {
-	if (bioset_init(&xfs_ioend_bioset, 4 * (PAGE_SIZE / SECTOR_SIZE),
+	if (bioset_init(&xfs_ioend_bioset, 4 * MAX_BUF_PER_PAGE,
 			offsetof(struct xfs_ioend, io_inline_bio),
 			BIOSET_NEED_BVECS))
 		goto out;

@@ -80,7 +80,6 @@ static __always_inline void arch_atomic_sub(int i, atomic_t *v)
  * true if the result is zero, or false for all
  * other cases.
  */
-#define arch_atomic_sub_and_test arch_atomic_sub_and_test
 static __always_inline bool arch_atomic_sub_and_test(int i, atomic_t *v)
 {
 	GEN_BINARY_RMWcc(LOCK_PREFIX "subl", v->counter, "er", i, "%0", e);
@@ -92,7 +91,6 @@ static __always_inline bool arch_atomic_sub_and_test(int i, atomic_t *v)
  *
  * Atomically increments @v by 1.
  */
-#define arch_atomic_inc arch_atomic_inc
 static __always_inline void arch_atomic_inc(atomic_t *v)
 {
 	asm volatile(LOCK_PREFIX "incl %0"
@@ -105,7 +103,6 @@ static __always_inline void arch_atomic_inc(atomic_t *v)
  *
  * Atomically decrements @v by 1.
  */
-#define arch_atomic_dec arch_atomic_dec
 static __always_inline void arch_atomic_dec(atomic_t *v)
 {
 	asm volatile(LOCK_PREFIX "decl %0"
@@ -120,7 +117,6 @@ static __always_inline void arch_atomic_dec(atomic_t *v)
  * returns true if the result is 0, or false for all other
  * cases.
  */
-#define arch_atomic_dec_and_test arch_atomic_dec_and_test
 static __always_inline bool arch_atomic_dec_and_test(atomic_t *v)
 {
 	GEN_UNARY_RMWcc(LOCK_PREFIX "decl", v->counter, "%0", e);
@@ -134,7 +130,6 @@ static __always_inline bool arch_atomic_dec_and_test(atomic_t *v)
  * and returns true if the result is zero, or false for all
  * other cases.
  */
-#define arch_atomic_inc_and_test arch_atomic_inc_and_test
 static __always_inline bool arch_atomic_inc_and_test(atomic_t *v)
 {
 	GEN_UNARY_RMWcc(LOCK_PREFIX "incl", v->counter, "%0", e);
@@ -149,7 +144,6 @@ static __always_inline bool arch_atomic_inc_and_test(atomic_t *v)
  * if the result is negative, or false when
  * result is greater than or equal to zero.
  */
-#define arch_atomic_add_negative arch_atomic_add_negative
 static __always_inline bool arch_atomic_add_negative(int i, atomic_t *v)
 {
 	GEN_BINARY_RMWcc(LOCK_PREFIX "addl", v->counter, "er", i, "%0", s);
@@ -178,6 +172,9 @@ static __always_inline int arch_atomic_sub_return(int i, atomic_t *v)
 {
 	return arch_atomic_add_return(-i, v);
 }
+
+#define arch_atomic_inc_return(v)  (arch_atomic_add_return(1, v))
+#define arch_atomic_dec_return(v)  (arch_atomic_sub_return(1, v))
 
 static __always_inline int arch_atomic_fetch_add(int i, atomic_t *v)
 {
@@ -254,6 +251,27 @@ static inline int arch_atomic_fetch_xor(int i, atomic_t *v)
 	do { } while (!arch_atomic_try_cmpxchg(v, &val, val ^ i));
 
 	return val;
+}
+
+/**
+ * __arch_atomic_add_unless - add unless the number is already a given value
+ * @v: pointer of type atomic_t
+ * @a: the amount to add to v...
+ * @u: ...unless v is equal to u.
+ *
+ * Atomically adds @a to @v, so long as @v was not already @u.
+ * Returns the old value of @v.
+ */
+static __always_inline int __arch_atomic_add_unless(atomic_t *v, int a, int u)
+{
+	int c = arch_atomic_read(v);
+
+	do {
+		if (unlikely(c == u))
+			break;
+	} while (!arch_atomic_try_cmpxchg(v, &c, c + a));
+
+	return c;
 }
 
 #ifdef CONFIG_X86_32

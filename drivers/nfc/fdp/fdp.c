@@ -192,8 +192,8 @@ static int fdp_nci_send_patch(struct nci_dev *ndev, u8 conn_id, u8 type)
 	const struct firmware *fw;
 	struct sk_buff *skb;
 	unsigned long len;
-	u8 payload_size;
-	int max_size, rc = 0;
+	u8 max_size, payload_size;
+	int rc = 0;
 
 	if ((type == NCI_PATCH_TYPE_OTP && !info->otp_patch) ||
 	    (type == NCI_PATCH_TYPE_RAM && !info->ram_patch))
@@ -247,6 +247,9 @@ static int fdp_nci_open(struct nci_dev *ndev)
 {
 	int r;
 	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
+
+	dev_dbg(dev, "%s\n", __func__);
 
 	r = info->phy_ops->enable(info->phy);
 
@@ -255,12 +258,19 @@ static int fdp_nci_open(struct nci_dev *ndev)
 
 static int fdp_nci_close(struct nci_dev *ndev)
 {
+	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
+
+	dev_dbg(dev, "%s\n", __func__);
 	return 0;
 }
 
 static int fdp_nci_send(struct nci_dev *ndev, struct sk_buff *skb)
 {
 	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
+
+	dev_dbg(dev, "%s\n", __func__);
 
 	if (atomic_dec_and_test(&info->data_pkt_counter))
 		info->data_pkt_counter_cb(ndev);
@@ -270,6 +280,10 @@ static int fdp_nci_send(struct nci_dev *ndev, struct sk_buff *skb)
 
 int fdp_nci_recv_frame(struct nci_dev *ndev, struct sk_buff *skb)
 {
+	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
+
+	dev_dbg(dev, "%s\n", __func__);
 	return nci_recv_frame(ndev, skb);
 }
 EXPORT_SYMBOL(fdp_nci_recv_frame);
@@ -484,6 +498,8 @@ static int fdp_nci_setup(struct nci_dev *ndev)
 	int r;
 	u8 patched = 0;
 
+	dev_dbg(dev, "%s\n", __func__);
+
 	r = nci_core_init(ndev);
 	if (r)
 		goto error;
@@ -591,7 +607,9 @@ static int fdp_nci_core_reset_ntf_packet(struct nci_dev *ndev,
 					  struct sk_buff *skb)
 {
 	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
 
+	dev_dbg(dev, "%s\n", __func__);
 	info->setup_reset_ntf = 1;
 	wake_up(&info->setup_wq);
 
@@ -602,7 +620,9 @@ static int fdp_nci_prop_patch_ntf_packet(struct nci_dev *ndev,
 					  struct sk_buff *skb)
 {
 	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
 
+	dev_dbg(dev, "%s\n", __func__);
 	info->setup_patch_ntf = 1;
 	info->setup_patch_status = skb->data[0];
 	wake_up(&info->setup_wq);
@@ -617,7 +637,7 @@ static int fdp_nci_prop_patch_rsp_packet(struct nci_dev *ndev,
 	struct device *dev = &info->phy->i2c_dev->dev;
 	u8 status = skb->data[0];
 
-	dev_dbg(dev, "status 0x%x\n", status);
+	dev_dbg(dev, "%s: status 0x%x\n", __func__, status);
 	nci_req_complete(ndev, status);
 
 	return 0;
@@ -630,7 +650,7 @@ static int fdp_nci_prop_set_production_data_rsp_packet(struct nci_dev *ndev,
 	struct device *dev = &info->phy->i2c_dev->dev;
 	u8 status = skb->data[0];
 
-	dev_dbg(dev, "status 0x%x\n", status);
+	dev_dbg(dev, "%s: status 0x%x\n", __func__, status);
 	nci_req_complete(ndev, status);
 
 	return 0;
@@ -675,7 +695,7 @@ static int fdp_nci_core_get_config_rsp_packet(struct nci_dev *ndev,
 	dev_dbg(dev, "OTP version %d\n", info->otp_version);
 	dev_dbg(dev, "RAM version %d\n", info->ram_version);
 	dev_dbg(dev, "key index %d\n", info->key_index);
-	dev_dbg(dev, "status 0x%x\n", rsp->status);
+	dev_dbg(dev, "%s: status 0x%x\n", __func__, rsp->status);
 
 	nci_req_complete(ndev, rsp->status);
 
@@ -775,6 +795,11 @@ EXPORT_SYMBOL(fdp_nci_probe);
 
 void fdp_nci_remove(struct nci_dev *ndev)
 {
+	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
+
+	dev_dbg(dev, "%s\n", __func__);
+
 	nci_unregister_device(ndev);
 	nci_free_device(ndev);
 }

@@ -7347,11 +7347,11 @@ out:
 
 static void valleyview_cleanup_pctx(struct drm_i915_private *dev_priv)
 {
-	struct drm_i915_gem_object *pctx;
+	if (WARN_ON(!dev_priv->vlv_pctx))
+		return;
 
-	pctx = fetch_and_zero(&dev_priv->vlv_pctx);
-	if (pctx)
-		i915_gem_object_put(pctx);
+	i915_gem_object_put(dev_priv->vlv_pctx);
+	dev_priv->vlv_pctx = NULL;
 }
 
 static void vlv_init_gpll_ref_freq(struct drm_i915_private *dev_priv)

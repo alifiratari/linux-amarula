@@ -46,6 +46,7 @@ if ! /sbin/modprobe -q -n usbip_host; then
 fi
 
 if /sbin/modprobe -q usbip_host; then
+	/sbin/modprobe -q -r test_bitmap
 	echo "usbip_test: module usbip_host is loaded [OK]"
 else
 	echo "usbip_test: module usbip_host failed to load [FAIL]"
@@ -55,6 +56,7 @@ fi
 
 echo "Load vhci_hcd module"
 if /sbin/modprobe -q vhci_hcd; then
+	/sbin/modprobe -q -r test_bitmap
 	echo "usbip_test: module vhci_hcd is loaded [OK]"
 else
 	echo "usbip_test: module vhci_hcd failed to load [FAIL]"

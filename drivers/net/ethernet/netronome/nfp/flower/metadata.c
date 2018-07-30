@@ -158,6 +158,7 @@ static int nfp_release_mask_id(struct nfp_app *app, u8 mask_id)
 {
 	struct nfp_flower_priv *priv = app->priv;
 	struct circ_buf *ring;
+	struct timespec64 now;
 
 	ring = &priv->mask_ids.mask_id_free_list;
 	/* Checking if buffer is full. */
@@ -168,7 +169,8 @@ static int nfp_release_mask_id(struct nfp_app *app, u8 mask_id)
 	ring->head = (ring->head + NFP_FLOWER_MASK_ELEMENT_RS) %
 		     (NFP_FLOWER_MASK_ENTRY_RS * NFP_FLOWER_MASK_ELEMENT_RS);
 
-	priv->mask_ids.last_used[mask_id] = ktime_get();
+	getnstimeofday64(&now);
+	priv->mask_ids.last_used[mask_id] = now;
 
 	return 0;
 }
@@ -176,7 +178,7 @@ static int nfp_release_mask_id(struct nfp_app *app, u8 mask_id)
 static int nfp_mask_alloc(struct nfp_app *app, u8 *mask_id)
 {
 	struct nfp_flower_priv *priv = app->priv;
-	ktime_t reuse_timeout;
+	struct timespec64 delta, now;
 	struct circ_buf *ring;
 	u8 temp_id, freed_id;
 
@@ -196,10 +198,10 @@ static int nfp_mask_alloc(struct nfp_app *app, u8 *mask_id)
 	memcpy(&temp_id, &ring->buf[ring->tail], NFP_FLOWER_MASK_ELEMENT_RS);
 	*mask_id = temp_id;
 
-	reuse_timeout = ktime_add_ns(priv->mask_ids.last_used[*mask_id],
-				     NFP_FL_MASK_REUSE_TIME_NS);
+	getnstimeofday64(&now);
+	delta = timespec64_sub(now, priv->mask_ids.last_used[*mask_id]);
 
-	if (ktime_before(ktime_get(), reuse_timeout))
+	if (timespec64_to_ns(&delta) < NFP_FL_MASK_REUSE_TIME_NS)
 		goto err_not_found;
 
 	memcpy(&ring->buf[ring->tail], &freed_id, NFP_FLOWER_MASK_ELEMENT_RS);

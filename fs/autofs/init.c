@@ -11,9 +11,9 @@
 #include "autofs_i.h"
 
 static struct dentry *autofs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_nodev(fs_type, flags, data, data_size, autofs_fill_super);
+	return mount_nodev(fs_type, flags, data, autofs_fill_super);
 }
 
 static struct file_system_type autofs_fs_type = {
@@ -23,7 +23,7 @@ static struct file_system_type autofs_fs_type = {
 	.kill_sb	= autofs_kill_sb,
 };
 MODULE_ALIAS_FS("autofs");
-MODULE_ALIAS("autofs");
+MODULE_ALIAS("autofs4");
 
 static int __init init_autofs_fs(void)
 {

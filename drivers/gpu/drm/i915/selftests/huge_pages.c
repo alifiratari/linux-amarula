@@ -919,12 +919,12 @@ gpu_write_dw(struct i915_vma *vma, u64 offset, u32 val)
 			*cmd++ = val;
 		} else if (gen >= 4) {
 			*cmd++ = MI_STORE_DWORD_IMM_GEN4 |
-				(gen < 6 ? MI_USE_GGTT : 0);
+				(gen < 6 ? 1 << 22 : 0);
 			*cmd++ = 0;
 			*cmd++ = offset;
 			*cmd++ = val;
 		} else {
-			*cmd++ = MI_STORE_DWORD_IMM | MI_MEM_VIRTUAL;
+			*cmd++ = MI_STORE_DWORD_IMM | 1 << 22;
 			*cmd++ = offset;
 			*cmd++ = val;
 		}
@@ -985,10 +985,7 @@ static int gpu_write(struct i915_vma *vma,
 		goto err_request;
 	}
 
-	err = i915_vma_move_to_active(batch, rq, 0);
-	if (err)
-		goto err_request;
-
+	i915_vma_move_to_active(batch, rq, 0);
 	i915_gem_object_set_active_reference(batch->obj);
 	i915_vma_unpin(batch);
 	i915_vma_close(batch);
@@ -999,9 +996,11 @@ static int gpu_write(struct i915_vma *vma,
 	if (err)
 		goto err_request;
 
-	err = i915_vma_move_to_active(vma, rq, EXEC_OBJECT_WRITE);
-	if (err)
-		i915_request_skip(rq, err);
+	i915_vma_move_to_active(vma, rq, EXEC_OBJECT_WRITE);
+
+	reservation_object_lock(vma->resv, NULL);
+	reservation_object_add_excl_fence(vma->resv, &rq->fence);
+	reservation_object_unlock(vma->resv);
 
 err_request:
 	i915_request_add(rq);
@@ -1695,7 +1694,7 @@ int i915_gem_huge_page_mock_selftests(void)
 	dma_coerce_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(39));
 
 	mutex_lock(&dev_priv->drm.struct_mutex);
-	ppgtt = i915_ppgtt_create(dev_priv, ERR_PTR(-ENODEV));
+	ppgtt = i915_ppgtt_create(dev_priv, ERR_PTR(-ENODEV), "mock");
 	if (IS_ERR(ppgtt)) {
 		err = PTR_ERR(ppgtt);
 		goto out_unlock;
@@ -1725,7 +1724,7 @@ out_unlock:
 
 	i915_modparams.enable_ppgtt = saved_ppgtt;
 
-	drm_dev_put(&dev_priv->drm);
+	drm_dev_unref(&dev_priv->drm);
 
 	return err;
 }
@@ -1748,9 +1747,6 @@ int i915_gem_huge_page_live_selftests(struct drm_i915_private *dev_priv)
 		pr_info("PPGTT not supported, skipping live-selftests\n");
 		return 0;
 	}
-
-	if (i915_terminally_wedged(&dev_priv->gpu_error))
-		return 0;
 
 	file = mock_file(dev_priv);
 	if (IS_ERR(file))

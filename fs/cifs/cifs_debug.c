@@ -160,41 +160,25 @@ static int cifs_debug_data_proc_show(struct seq_file *m, void *v)
 	seq_printf(m, "CIFS Version %s\n", CIFS_VERSION);
 	seq_printf(m, "Features:");
 #ifdef CONFIG_CIFS_DFS_UPCALL
-	seq_printf(m, " DFS");
+	seq_printf(m, " dfs");
 #endif
 #ifdef CONFIG_CIFS_FSCACHE
-	seq_printf(m, ",FSCACHE");
-#endif
-#ifdef CONFIG_CIFS_SMB_DIRECT
-	seq_printf(m, ",SMB_DIRECT");
-#endif
-#ifdef CONFIG_CIFS_STATS2
-	seq_printf(m, ",STATS2");
-#elif defined(CONFIG_CIFS_STATS)
-	seq_printf(m, ",STATS");
-#endif
-#ifdef CONFIG_CIFS_DEBUG2
-	seq_printf(m, ",DEBUG2");
-#elif defined(CONFIG_CIFS_DEBUG)
-	seq_printf(m, ",DEBUG");
-#endif
-#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
-	seq_printf(m, ",ALLOW_INSECURE_LEGACY");
+	seq_printf(m, " fscache");
 #endif
 #ifdef CONFIG_CIFS_WEAK_PW_HASH
-	seq_printf(m, ",WEAK_PW_HASH");
+	seq_printf(m, " lanman");
 #endif
 #ifdef CONFIG_CIFS_POSIX
-	seq_printf(m, ",CIFS_POSIX");
+	seq_printf(m, " posix");
 #endif
 #ifdef CONFIG_CIFS_UPCALL
-	seq_printf(m, ",UPCALL(SPNEGO)");
+	seq_printf(m, " spnego");
 #endif
 #ifdef CONFIG_CIFS_XATTR
-	seq_printf(m, ",XATTR");
+	seq_printf(m, " xattr");
 #endif
 #ifdef CONFIG_CIFS_ACL
-	seq_printf(m, ",ACL");
+	seq_printf(m, " acl");
 #endif
 	seq_putc(m, '\n');
 	seq_printf(m, "Active VFS Requests: %d\n", GlobalTotalActiveXid);
@@ -275,9 +259,10 @@ skip_rdma:
 			server->credits,  server->dialect);
 		if (server->sign)
 			seq_printf(m, " signed");
+#ifdef CONFIG_CIFS_SMB311
 		if (server->posix_ext_supported)
 			seq_printf(m, " posix");
-
+#endif /* 3.1.1 */
 		i++;
 		list_for_each(tmp2, &server->smb_ses_list) {
 			ses = list_entry(tmp2, struct cifs_ses,

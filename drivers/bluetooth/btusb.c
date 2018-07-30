@@ -374,7 +374,6 @@ static const struct usb_device_id blacklist_table[] = {
 	{ USB_DEVICE(0x7392, 0xa611), .driver_info = BTUSB_REALTEK },
 
 	/* Additional Realtek 8723DE Bluetooth devices */
-	{ USB_DEVICE(0x0bda, 0xb009), .driver_info = BTUSB_REALTEK },
 	{ USB_DEVICE(0x2ff8, 0xb011), .driver_info = BTUSB_REALTEK },
 
 	/* Additional Realtek 8821AE Bluetooth devices */
@@ -510,10 +509,9 @@ static inline void btusb_free_frags(struct btusb_data *data)
 static int btusb_recv_intr(struct btusb_data *data, void *buffer, int count)
 {
 	struct sk_buff *skb;
-	unsigned long flags;
 	int err = 0;
 
-	spin_lock_irqsave(&data->rxlock, flags);
+	spin_lock(&data->rxlock);
 	skb = data->evt_skb;
 
 	while (count) {
@@ -558,7 +556,7 @@ static int btusb_recv_intr(struct btusb_data *data, void *buffer, int count)
 	}
 
 	data->evt_skb = skb;
-	spin_unlock_irqrestore(&data->rxlock, flags);
+	spin_unlock(&data->rxlock);
 
 	return err;
 }
@@ -566,10 +564,9 @@ static int btusb_recv_intr(struct btusb_data *data, void *buffer, int count)
 static int btusb_recv_bulk(struct btusb_data *data, void *buffer, int count)
 {
 	struct sk_buff *skb;
-	unsigned long flags;
 	int err = 0;
 
-	spin_lock_irqsave(&data->rxlock, flags);
+	spin_lock(&data->rxlock);
 	skb = data->acl_skb;
 
 	while (count) {
@@ -616,7 +613,7 @@ static int btusb_recv_bulk(struct btusb_data *data, void *buffer, int count)
 	}
 
 	data->acl_skb = skb;
-	spin_unlock_irqrestore(&data->rxlock, flags);
+	spin_unlock(&data->rxlock);
 
 	return err;
 }
@@ -624,10 +621,9 @@ static int btusb_recv_bulk(struct btusb_data *data, void *buffer, int count)
 static int btusb_recv_isoc(struct btusb_data *data, void *buffer, int count)
 {
 	struct sk_buff *skb;
-	unsigned long flags;
 	int err = 0;
 
-	spin_lock_irqsave(&data->rxlock, flags);
+	spin_lock(&data->rxlock);
 	skb = data->sco_skb;
 
 	while (count) {
@@ -672,7 +668,7 @@ static int btusb_recv_isoc(struct btusb_data *data, void *buffer, int count)
 	}
 
 	data->sco_skb = skb;
-	spin_unlock_irqrestore(&data->rxlock, flags);
+	spin_unlock(&data->rxlock);
 
 	return err;
 }
@@ -1070,7 +1066,6 @@ static void btusb_tx_complete(struct urb *urb)
 	struct sk_buff *skb = urb->context;
 	struct hci_dev *hdev = (struct hci_dev *)skb->dev;
 	struct btusb_data *data = hci_get_drvdata(hdev);
-	unsigned long flags;
 
 	BT_DBG("%s urb %p status %d count %d", hdev->name, urb, urb->status,
 	       urb->actual_length);
@@ -1084,9 +1079,9 @@ static void btusb_tx_complete(struct urb *urb)
 		hdev->stat.err_tx++;
 
 done:
-	spin_lock_irqsave(&data->txlock, flags);
+	spin_lock(&data->txlock);
 	data->tx_in_flight--;
-	spin_unlock_irqrestore(&data->txlock, flags);
+	spin_unlock(&data->txlock);
 
 	kfree(urb->setup_packet);
 

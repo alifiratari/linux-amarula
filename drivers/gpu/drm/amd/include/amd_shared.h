@@ -128,57 +128,47 @@ enum PP_FEATURE_MASK {
 	PP_OVERDRIVE_MASK = 0x4000,
 	PP_GFXOFF_MASK = 0x8000,
 	PP_ACG_MASK = 0x10000,
-	PP_STUTTER_MODE = 0x20000,
 };
 
-/**
- * struct amd_ip_funcs - general hooks for managing amdgpu IP Blocks
- */
 struct amd_ip_funcs {
-	/** @name: Name of IP block */
+	/* Name of IP block */
 	char *name;
-	/**
-	 * @early_init:
-	 *
-	 * sets up early driver state (pre sw_init),
-	 * does not configure hw - Optional
-	 */
+	/* sets up early driver state (pre sw_init), does not configure hw - Optional */
 	int (*early_init)(void *handle);
-	/** @late_init: sets up late driver/hw state (post hw_init) - Optional */
+	/* sets up late driver/hw state (post hw_init) - Optional */
 	int (*late_init)(void *handle);
-	/** @sw_init: sets up driver state, does not configure hw */
+	/* sets up driver state, does not configure hw */
 	int (*sw_init)(void *handle);
-	/** @sw_fini: tears down driver state, does not configure hw */
+	/* tears down driver state, does not configure hw */
 	int (*sw_fini)(void *handle);
-	/** @hw_init: sets up the hw state */
+	/* sets up the hw state */
 	int (*hw_init)(void *handle);
-	/** @hw_fini: tears down the hw state */
+	/* tears down the hw state */
 	int (*hw_fini)(void *handle);
-	/** @late_fini: final cleanup */
 	void (*late_fini)(void *handle);
-	/** @suspend: handles IP specific hw/sw changes for suspend */
+	/* handles IP specific hw/sw changes for suspend */
 	int (*suspend)(void *handle);
-	/** @resume: handles IP specific hw/sw changes for resume */
+	/* handles IP specific hw/sw changes for resume */
 	int (*resume)(void *handle);
-	/** @is_idle: returns current IP block idle status */
+	/* returns current IP block idle status */
 	bool (*is_idle)(void *handle);
-	/** @wait_for_idle: poll for idle */
+	/* poll for idle */
 	int (*wait_for_idle)(void *handle);
-	/** @check_soft_reset: check soft reset the IP block */
+	/* check soft reset the IP block */
 	bool (*check_soft_reset)(void *handle);
-	/** @pre_soft_reset: pre soft reset the IP block */
+	/* pre soft reset the IP block */
 	int (*pre_soft_reset)(void *handle);
-	/** @soft_reset: soft reset the IP block */
+	/* soft reset the IP block */
 	int (*soft_reset)(void *handle);
-	/** @post_soft_reset: post soft reset the IP block */
+	/* post soft reset the IP block */
 	int (*post_soft_reset)(void *handle);
-	/** @set_clockgating_state: enable/disable cg for the IP block */
+	/* enable/disable cg for the IP block */
 	int (*set_clockgating_state)(void *handle,
 				     enum amd_clockgating_state state);
-	/** @set_powergating_state: enable/disable pg for the IP block */
+	/* enable/disable pg for the IP block */
 	int (*set_powergating_state)(void *handle,
 				     enum amd_powergating_state state);
-	/** @get_clockgating_state: get current clockgating status */
+	/* get current clockgating status */
 	void (*get_clockgating_state)(void *handle, u32 *flags);
 };
 

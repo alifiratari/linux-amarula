@@ -163,7 +163,6 @@ struct intel_excl_cntrs {
 	unsigned	core_id;	/* per-core: core id */
 };
 
-struct x86_perf_task_context;
 #define MAX_LBR_ENTRIES		32
 
 enum {
@@ -215,8 +214,6 @@ struct cpu_hw_events {
 	struct perf_branch_entry	lbr_entries[MAX_LBR_ENTRIES];
 	struct er_account		*lbr_sel;
 	u64				br_sel;
-	struct x86_perf_task_context	*last_task_ctx;
-	int				last_log_id;
 
 	/*
 	 * Intel host/guest exclude bits
@@ -651,10 +648,8 @@ struct x86_perf_task_context {
 	u64 lbr_to[MAX_LBR_ENTRIES];
 	u64 lbr_info[MAX_LBR_ENTRIES];
 	int tos;
-	int valid_lbrs;
 	int lbr_callstack_users;
 	int lbr_stack_state;
-	int log_id;
 };
 
 #define x86_add_quirk(func_)						\

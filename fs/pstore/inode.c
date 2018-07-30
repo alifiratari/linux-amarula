@@ -271,8 +271,7 @@ static int pstore_show_options(struct seq_file *m, struct dentry *root)
 	return 0;
 }
 
-static int pstore_remount(struct super_block *sb, int *flags,
-			  char *data, size_t data_size)
+static int pstore_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
 	parse_options(data);
@@ -433,8 +432,7 @@ void pstore_get_records(int quiet)
 	inode_unlock(d_inode(root));
 }
 
-static int pstore_fill_super(struct super_block *sb,
-			     void *data, size_t data_size, int silent)
+static int pstore_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode;
 
@@ -466,9 +464,9 @@ static int pstore_fill_super(struct super_block *sb,
 }
 
 static struct dentry *pstore_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_single(fs_type, flags, data, data_size, pstore_fill_super);
+	return mount_single(fs_type, flags, data, pstore_fill_super);
 }
 
 static void pstore_kill_sb(struct super_block *sb)

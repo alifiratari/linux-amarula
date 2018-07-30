@@ -20,9 +20,6 @@ struct qdisc_walker;
 struct tcf_walker;
 struct module;
 
-typedef int tc_setup_cb_t(enum tc_setup_type type,
-			  void *type_data, void *cb_priv);
-
 struct qdisc_rate_table {
 	struct tc_ratespec rate;
 	u32		data[256];
@@ -259,9 +256,6 @@ struct tcf_proto_ops {
 					  bool *last,
 					  struct netlink_ext_ack *);
 	void			(*walk)(struct tcf_proto*, struct tcf_walker *arg);
-	int			(*reoffload)(struct tcf_proto *tp, bool add,
-					     tc_setup_cb_t *cb, void *cb_priv,
-					     struct netlink_ext_ack *extack);
 	void			(*bind_class)(void *, u32, unsigned long);
 
 	/* rtnetlink specific */
@@ -334,21 +328,6 @@ static inline void tcf_block_offload_dec(struct tcf_block *block, u32 *flags)
 		return;
 	*flags &= ~TCA_CLS_FLAGS_IN_HW;
 	block->offloadcnt--;
-}
-
-static inline void
-tc_cls_offload_cnt_update(struct tcf_block *block, unsigned int *cnt,
-			  u32 *flags, bool add)
-{
-	if (add) {
-		if (!*cnt)
-			tcf_block_offload_inc(block, flags);
-		(*cnt)++;
-	} else {
-		(*cnt)--;
-		if (!*cnt)
-			tcf_block_offload_dec(block, flags);
-	}
 }
 
 static inline void qdisc_cb_private_validate(const struct sk_buff *skb, int sz)

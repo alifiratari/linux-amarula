@@ -8,7 +8,7 @@
 # with ".out" appended.
 #
 # Usage:
-#	checklitmus.sh file.litmus
+#	sh checklitmus.sh file.litmus
 #
 # The LINUX_HERD_OPTIONS environment variable may be used to specify
 # arguments to herd, which default to "-conf linux-kernel.cfg".  Thus,

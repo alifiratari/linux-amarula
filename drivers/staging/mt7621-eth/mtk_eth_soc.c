@@ -1822,9 +1822,10 @@ static int __init mtk_init(struct net_device *dev)
 
 	/* If the mac address is invalid, use random mac address  */
 	if (!is_valid_ether_addr(dev->dev_addr)) {
-		eth_hw_addr_random(dev);
+		random_ether_addr(dev->dev_addr);
 		dev_err(eth->dev, "generated random MAC address %pM\n",
 			dev->dev_addr);
+		dev->addr_assign_type = NET_ADDR_RANDOM;
 	}
 	mac->hw->soc->set_mac(mac, dev->dev_addr);
 
@@ -2011,10 +2012,8 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 		mac->hw_stats = devm_kzalloc(eth->dev,
 					     sizeof(*mac->hw_stats),
 					     GFP_KERNEL);
-		if (!mac->hw_stats) {
-			err = -ENOMEM;
-			goto free_netdev;
-		}
+		if (!mac->hw_stats)
+			return -ENOMEM;
 		spin_lock_init(&mac->hw_stats->stats_lock);
 		mac->hw_stats->reg_offset = id * MTK_STAT_OFFSET;
 	}
@@ -2038,8 +2037,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	err = register_netdev(eth->netdev[id]);
 	if (err) {
 		dev_err(eth->dev, "error bringing up device\n");
-		err = -ENOMEM;
-		goto free_netdev;
+		return err;
 	}
 	eth->netdev[id]->irq = eth->irq;
 	netif_info(eth, probe, eth->netdev[id],
@@ -2047,10 +2045,6 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 		   eth->netdev[id]->base_addr, eth->netdev[id]->irq);
 
 	return 0;
-
-free_netdev:
-	free_netdev(eth->netdev[id]);
-	return err;
 }
 
 static int mtk_probe(struct platform_device *pdev)

@@ -1017,8 +1017,7 @@ static int ceph_setup_bdi(struct super_block *sb, struct ceph_fs_client *fsc)
 }
 
 static struct dentry *ceph_mount(struct file_system_type *fs_type,
-				 int flags, const char *dev_name,
-				 void *data, size_t data_size)
+		       int flags, const char *dev_name, void *data)
 {
 	struct super_block *sb;
 	struct ceph_fs_client *fsc;

@@ -1740,8 +1740,6 @@ struct regulator *_regulator_get(struct device *dev, const char *id,
 			rdev->use_count = 0;
 	}
 
-	device_link_add(dev, &rdev->dev, DL_FLAG_STATELESS);
-
 	return regulator;
 }
 
@@ -1831,21 +1829,9 @@ static void _regulator_put(struct regulator *regulator)
 
 	debugfs_remove_recursive(regulator->debugfs);
 
-	if (regulator->dev) {
-		int count = 0;
-		struct regulator *r;
-
-		list_for_each_entry(r, &rdev->consumer_list, list)
-			if (r->dev == regulator->dev)
-				count++;
-
-		if (count == 1)
-			device_link_remove(regulator->dev, &rdev->dev);
-
-		/* remove any sysfs entries */
+	/* remove any sysfs entries */
+	if (regulator->dev)
 		sysfs_remove_link(&rdev->dev.kobj, regulator->supply_name);
-	}
-
 	regulator_lock(rdev);
 	list_del(&regulator->list);
 
@@ -4455,7 +4441,7 @@ void regulator_unregister(struct regulator_dev *rdev)
 EXPORT_SYMBOL_GPL(regulator_unregister);
 
 #ifdef CONFIG_SUSPEND
-static int _regulator_suspend(struct device *dev, void *data)
+static int _regulator_suspend_late(struct device *dev, void *data)
 {
 	struct regulator_dev *rdev = dev_to_rdev(dev);
 	suspend_state_t *state = data;
@@ -4469,20 +4455,20 @@ static int _regulator_suspend(struct device *dev, void *data)
 }
 
 /**
- * regulator_suspend - prepare regulators for system wide suspend
+ * regulator_suspend_late - prepare regulators for system wide suspend
  * @state: system suspend state
  *
  * Configure each regulator with it's suspend operating parameters for state.
  */
-static int regulator_suspend(struct device *dev)
+static int regulator_suspend_late(struct device *dev)
 {
 	suspend_state_t state = pm_suspend_target_state;
 
 	return class_for_each_device(&regulator_class, NULL, &state,
-				     _regulator_suspend);
+				     _regulator_suspend_late);
 }
 
-static int _regulator_resume(struct device *dev, void *data)
+static int _regulator_resume_early(struct device *dev, void *data)
 {
 	int ret = 0;
 	struct regulator_dev *rdev = dev_to_rdev(dev);
@@ -4495,35 +4481,35 @@ static int _regulator_resume(struct device *dev, void *data)
 
 	regulator_lock(rdev);
 
-	if (rdev->desc->ops->resume &&
+	if (rdev->desc->ops->resume_early &&
 	    (rstate->enabled == ENABLE_IN_SUSPEND ||
 	     rstate->enabled == DISABLE_IN_SUSPEND))
-		ret = rdev->desc->ops->resume(rdev);
+		ret = rdev->desc->ops->resume_early(rdev);
 
 	regulator_unlock(rdev);
 
 	return ret;
 }
 
-static int regulator_resume(struct device *dev)
+static int regulator_resume_early(struct device *dev)
 {
 	suspend_state_t state = pm_suspend_target_state;
 
 	return class_for_each_device(&regulator_class, NULL, &state,
-				     _regulator_resume);
+				     _regulator_resume_early);
 }
 
 #else /* !CONFIG_SUSPEND */
 
-#define regulator_suspend	NULL
-#define regulator_resume	NULL
+#define regulator_suspend_late	NULL
+#define regulator_resume_early	NULL
 
 #endif /* !CONFIG_SUSPEND */
 
 #ifdef CONFIG_PM
 static const struct dev_pm_ops __maybe_unused regulator_pm_ops = {
-	.suspend	= regulator_suspend,
-	.resume		= regulator_resume,
+	.suspend_late	= regulator_suspend_late,
+	.resume_early	= regulator_resume_early,
 };
 #endif
 

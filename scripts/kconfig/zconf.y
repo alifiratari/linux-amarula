@@ -265,7 +265,7 @@ symbol_option_arg:
 choice: T_CHOICE word_opt T_EOL
 {
 	struct symbol *sym = sym_lookup($2, SYMBOL_CHOICE);
-	sym->flags |= SYMBOL_NO_WRITE;
+	sym->flags |= SYMBOL_AUTO;
 	menu_add_entry(sym);
 	menu_add_expr(P_CHOICE, NULL, NULL);
 	free($2);

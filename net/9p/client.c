@@ -225,8 +225,7 @@ static int parse_opts(char *opts, struct p9_client *clnt)
 	}
 
 free_and_return:
-	if (ret)
-		v9fs_put_trans(clnt->trans_mod);
+	v9fs_put_trans(clnt->trans_mod);
 	kfree(tmp_options);
 	return ret;
 }
@@ -958,7 +957,7 @@ static int p9_client_version(struct p9_client *c)
 {
 	int err = 0;
 	struct p9_req_t *req;
-	char *version = NULL;
+	char *version;
 	int msize;
 
 	p9_debug(P9_DEBUG_9P, ">>> TVERSION msize %d protocol %d\n",
@@ -1790,7 +1789,7 @@ struct p9_stat_dotl *p9_client_getattr_dotl(struct p9_fid *fid,
 		"<<< st_mtime_sec=%lld st_mtime_nsec=%lld\n"
 		"<<< st_ctime_sec=%lld st_ctime_nsec=%lld\n"
 		"<<< st_btime_sec=%lld st_btime_nsec=%lld\n"
-		"<<< st_gen=%lld st_data_version=%lld\n",
+		"<<< st_gen=%lld st_data_version=%lld",
 		ret->st_result_mask, ret->qid.type, ret->qid.path,
 		ret->qid.version, ret->st_mode, ret->st_nlink,
 		from_kuid(&init_user_ns, ret->st_uid),

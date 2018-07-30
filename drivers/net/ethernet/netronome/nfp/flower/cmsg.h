@@ -203,9 +203,9 @@ struct nfp_fl_set_ipv4_udp_tun {
 	__be16 reserved;
 	__be64 tun_id __packed;
 	__be32 tun_type_index;
-	__be16 tun_flags;
+	__be16 reserved2;
 	u8 ttl;
-	u8 tos;
+	u8 reserved3;
 	__be32 extra[2];
 };
 

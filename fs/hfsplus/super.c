@@ -326,8 +326,7 @@ static int hfsplus_statfs(struct dentry *dentry, struct kstatfs *buf)
 	return 0;
 }
 
-static int hfsplus_remount(struct super_block *sb, int *flags,
-			   char *data, size_t data_size)
+static int hfsplus_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
 	if ((bool)(*flags & SB_RDONLY) == sb_rdonly(sb))
@@ -372,8 +371,7 @@ static const struct super_operations hfsplus_sops = {
 	.show_options	= hfsplus_show_options,
 };
 
-static int hfsplus_fill_super(struct super_block *sb,
-			      void *data, size_t data_size, int silent)
+static int hfsplus_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct hfsplus_vh *vhdr;
 	struct hfsplus_sb_info *sbi;
@@ -526,10 +524,8 @@ static int hfsplus_fill_super(struct super_block *sb,
 		goto out_put_root;
 	if (!hfs_brec_read(&fd, &entry, sizeof(entry))) {
 		hfs_find_exit(&fd);
-		if (entry.type != cpu_to_be16(HFSPLUS_FOLDER)) {
-			err = -EINVAL;
+		if (entry.type != cpu_to_be16(HFSPLUS_FOLDER))
 			goto out_put_root;
-		}
 		inode = hfsplus_iget(sb, be32_to_cpu(entry.folder.id));
 		if (IS_ERR(inode)) {
 			err = PTR_ERR(inode);
@@ -645,11 +641,9 @@ static void hfsplus_destroy_inode(struct inode *inode)
 #define HFSPLUS_INODE_SIZE	sizeof(struct hfsplus_inode_info)
 
 static struct dentry *hfsplus_mount(struct file_system_type *fs_type,
-				    int flags, const char *dev_name,
-				    void *data, size_t data_size)
+			  int flags, const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  hfsplus_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, hfsplus_fill_super);
 }
 
 static struct file_system_type hfsplus_fs_type = {

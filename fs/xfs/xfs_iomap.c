@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2006 Silicon Graphics, Inc.
- * Copyright (c) 2016-2018 Christoph Hellwig.
+ * Copyright (c) 2016 Christoph Hellwig.
  * All Rights Reserved.
  */
 #include <linux/iomap.h>
@@ -152,6 +152,7 @@ xfs_iomap_write_direct(
 	xfs_fileoff_t	offset_fsb;
 	xfs_fileoff_t	last_fsb;
 	xfs_filblks_t	count_fsb, resaligned;
+	xfs_fsblock_t	firstfsb;
 	xfs_extlen_t	extsz;
 	int		nimaps;
 	int		quota_flag;
@@ -253,17 +254,18 @@ xfs_iomap_write_direct(
 	 * From this point onwards we overwrite the imap pointer that the
 	 * caller gave to us.
 	 */
-	xfs_defer_init(tp, &dfops);
+	xfs_defer_init(&dfops, &firstfsb);
 	nimaps = 1;
 	error = xfs_bmapi_write(tp, ip, offset_fsb, count_fsb,
-				bmapi_flags, resblks, imap, &nimaps);
+				bmapi_flags, &firstfsb, resblks, imap,
+				&nimaps, &dfops);
 	if (error)
 		goto out_bmap_cancel;
 
 	/*
 	 * Complete the transaction
 	 */
-	error = xfs_defer_finish(&tp, tp->t_dfops);
+	error = xfs_defer_finish(&tp, &dfops);
 	if (error)
 		goto out_bmap_cancel;
 
@@ -287,7 +289,7 @@ out_unlock:
 	return error;
 
 out_bmap_cancel:
-	xfs_defer_cancel(tp->t_dfops);
+	xfs_defer_cancel(&dfops);
 	xfs_trans_unreserve_quota_nblks(tp, ip, (long)qblocks, 0, quota_flag);
 out_trans_cancel:
 	xfs_trans_cancel(tp);
@@ -624,7 +626,7 @@ retry:
 	 * Flag newly allocated delalloc blocks with IOMAP_F_NEW so we punch
 	 * them out if the write happens to fail.
 	 */
-	iomap->flags |= IOMAP_F_NEW;
+	iomap->flags = IOMAP_F_NEW;
 	trace_xfs_iomap_alloc(ip, offset, count, 0, &got);
 done:
 	if (isnullstartblock(got.br_startblock))
@@ -663,6 +665,7 @@ xfs_iomap_write_allocate(
 	xfs_mount_t	*mp = ip->i_mount;
 	xfs_fileoff_t	offset_fsb, last_block;
 	xfs_fileoff_t	end_fsb, map_start_fsb;
+	xfs_fsblock_t	first_block;
 	struct xfs_defer_ops	dfops;
 	xfs_filblks_t	count_fsb;
 	xfs_trans_t	*tp;
@@ -713,7 +716,7 @@ xfs_iomap_write_allocate(
 			xfs_ilock(ip, XFS_ILOCK_EXCL);
 			xfs_trans_ijoin(tp, ip, 0);
 
-			xfs_defer_init(tp, &dfops);
+			xfs_defer_init(&dfops, &first_block);
 
 			/*
 			 * it is possible that the extents have changed since
@@ -767,12 +770,13 @@ xfs_iomap_write_allocate(
 			 * pointer that the caller gave to us.
 			 */
 			error = xfs_bmapi_write(tp, ip, map_start_fsb,
-						count_fsb, flags, nres, imap,
-						&nimaps);
+						count_fsb, flags, &first_block,
+						nres, imap, &nimaps,
+						&dfops);
 			if (error)
 				goto trans_cancel;
 
-			error = xfs_defer_finish(&tp, tp->t_dfops);
+			error = xfs_defer_finish(&tp, &dfops);
 			if (error)
 				goto trans_cancel;
 
@@ -806,7 +810,7 @@ xfs_iomap_write_allocate(
 	}
 
 trans_cancel:
-	xfs_defer_cancel(tp->t_dfops);
+	xfs_defer_cancel(&dfops);
 	xfs_trans_cancel(tp);
 error0:
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
@@ -824,6 +828,7 @@ xfs_iomap_write_unwritten(
 	xfs_fileoff_t	offset_fsb;
 	xfs_filblks_t	count_fsb;
 	xfs_filblks_t	numblks_fsb;
+	xfs_fsblock_t	firstfsb;
 	int		nimaps;
 	xfs_trans_t	*tp;
 	xfs_bmbt_irec_t imap;
@@ -872,11 +877,11 @@ xfs_iomap_write_unwritten(
 		/*
 		 * Modify the unwritten extent state of the buffer.
 		 */
-		xfs_defer_init(tp, &dfops);
+		xfs_defer_init(&dfops, &firstfsb);
 		nimaps = 1;
 		error = xfs_bmapi_write(tp, ip, offset_fsb, count_fsb,
-					XFS_BMAPI_CONVERT, resblks, &imap,
-					&nimaps);
+					XFS_BMAPI_CONVERT, &firstfsb, resblks,
+					&imap, &nimaps, &dfops);
 		if (error)
 			goto error_on_bmapi_transaction;
 
@@ -896,7 +901,7 @@ xfs_iomap_write_unwritten(
 			xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
 		}
 
-		error = xfs_defer_finish(&tp, tp->t_dfops);
+		error = xfs_defer_finish(&tp, &dfops);
 		if (error)
 			goto error_on_bmapi_transaction;
 
@@ -923,7 +928,7 @@ xfs_iomap_write_unwritten(
 	return 0;
 
 error_on_bmapi_transaction:
-	xfs_defer_cancel(tp->t_dfops);
+	xfs_defer_cancel(&dfops);
 	xfs_trans_cancel(tp);
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	return error;
@@ -1127,7 +1132,7 @@ xfs_file_iomap_begin(
 	if (error)
 		return error;
 
-	iomap->flags |= IOMAP_F_NEW;
+	iomap->flags = IOMAP_F_NEW;
 	trace_xfs_iomap_alloc(ip, offset, length, 0, &imap);
 
 out_finish:
@@ -1197,8 +1202,11 @@ xfs_file_iomap_end_delalloc(
 		truncate_pagecache_range(VFS_I(ip), XFS_FSB_TO_B(mp, start_fsb),
 					 XFS_FSB_TO_B(mp, end_fsb) - 1);
 
+		xfs_ilock(ip, XFS_ILOCK_EXCL);
 		error = xfs_bmap_punch_delalloc_range(ip, start_fsb,
 					       end_fsb - start_fsb);
+		xfs_iunlock(ip, XFS_ILOCK_EXCL);
+
 		if (error && !XFS_FORCED_SHUTDOWN(mp)) {
 			xfs_alert(mp, "%s: unable to clean up ino %lld",
 				__func__, ip->i_ino);

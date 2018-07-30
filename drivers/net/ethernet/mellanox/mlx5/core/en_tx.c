@@ -111,11 +111,10 @@ static inline int mlx5e_get_dscp_up(struct mlx5e_priv *priv, struct sk_buff *skb
 #endif
 
 u16 mlx5e_select_queue(struct net_device *dev, struct sk_buff *skb,
-		       struct net_device *sb_dev,
-		       select_queue_fallback_t fallback)
+		       void *accel_priv, select_queue_fallback_t fallback)
 {
 	struct mlx5e_priv *priv = netdev_priv(dev);
-	int channel_ix = fallback(dev, skb, NULL);
+	int channel_ix = fallback(dev, skb);
 	u16 num_channels;
 	int up = 0;
 
@@ -229,10 +228,7 @@ mlx5e_tx_get_gso_ihs(struct mlx5e_txqsq *sq, struct sk_buff *skb)
 		stats->tso_inner_packets++;
 		stats->tso_inner_bytes += skb->len - ihs;
 	} else {
-		if (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4)
-			ihs = skb_transport_offset(skb) + sizeof(struct udphdr);
-		else
-			ihs = skb_transport_offset(skb) + tcp_hdrlen(skb);
+		ihs = skb_transport_offset(skb) + tcp_hdrlen(skb);
 		stats->tso_packets++;
 		stats->tso_bytes += skb->len - ihs;
 	}
@@ -447,11 +443,12 @@ netdev_tx_t mlx5e_xmit(struct sk_buff *skb, struct net_device *dev)
 	sq = priv->txq2sq[skb_get_queue_mapping(skb)];
 	mlx5e_sq_fetch_wqe(sq, &wqe, &pi);
 
+#ifdef CONFIG_MLX5_ACCEL
 	/* might send skbs and update wqe and pi */
 	skb = mlx5e_accel_handle_tx(skb, sq, dev, &wqe, &pi);
 	if (unlikely(!skb))
 		return NETDEV_TX_OK;
-
+#endif
 	return mlx5e_sq_xmit(sq, skb, wqe, pi);
 }
 
@@ -469,7 +466,6 @@ static void mlx5e_dump_error_cqe(struct mlx5e_txqsq *sq,
 
 bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 {
-	struct mlx5e_sq_stats *stats;
 	struct mlx5e_txqsq *sq;
 	struct mlx5_cqe64 *cqe;
 	u32 dma_fifo_cc;
@@ -486,8 +482,6 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 	cqe = mlx5_cqwq_get_cqe(&cq->wq);
 	if (!cqe)
 		return false;
-
-	stats = sq->stats;
 
 	npkts = 0;
 	nbytes = 0;
@@ -517,7 +511,7 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 				queue_work(cq->channel->priv->wq,
 					   &sq->recover.recover_work);
 			}
-			stats->cqe_err++;
+			sq->stats->cqe_err++;
 		}
 
 		do {
@@ -562,8 +556,6 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 
 	} while ((++i < MLX5E_TX_CQ_POLL_BUDGET) && (cqe = mlx5_cqwq_get_cqe(&cq->wq)));
 
-	stats->cqes += i;
-
 	mlx5_cqwq_update_db_record(&cq->wq);
 
 	/* ensure cq space is freed before enabling more cqes */
@@ -579,7 +571,7 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 				   MLX5E_SQ_STOP_ROOM) &&
 	    !test_bit(MLX5E_SQ_STATE_RECOVERING, &sq->state)) {
 		netif_tx_wake_queue(sq->txq);
-		stats->wake++;
+		sq->stats->wake++;
 	}
 
 	return (i == MLX5E_TX_CQ_POLL_BUDGET);

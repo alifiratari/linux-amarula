@@ -10,7 +10,6 @@
 #include <linux/serial_reg.h>
 
 #include <asm/addrspace.h>
-#include <asm/setup.h>
 
 #ifdef CONFIG_SOC_RT288X
 #define EARLY_UART_BASE		0x300c00

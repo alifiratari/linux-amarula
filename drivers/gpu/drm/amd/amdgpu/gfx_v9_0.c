@@ -3714,10 +3714,6 @@ static int gfx_v9_0_set_powergating_state(void *handle,
 
 		/* update mgcg state */
 		gfx_v9_0_update_gfx_mg_power_gating(adev, enable);
-
-		/* set gfx off through smu */
-		if (enable && adev->powerplay.pp_funcs->set_powergating_by_smu)
-			amdgpu_dpm_set_powergating_by_smu(adev, AMD_IP_BLOCK_TYPE_GFX, true);
 		break;
 	default:
 		break;

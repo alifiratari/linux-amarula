@@ -207,7 +207,8 @@
  ********************************************/
 
 struct txq_entry_t {
-	struct list_head list;
+	struct txq_entry_t *next;
+	struct txq_entry_t *prev;
 	int type;
 	int tcp_pending_ack_idx;
 	u8 *buffer;
@@ -218,7 +219,7 @@ struct txq_entry_t {
 };
 
 struct rxq_entry_t {
-	struct list_head list;
+	struct rxq_entry_t *next;
 	u8 *buffer;
 	int buffer_size;
 };

@@ -445,8 +445,7 @@ HPFS filesystem options:\n\
 \n");
 }
 
-static int hpfs_remount_fs(struct super_block *s, int *flags,
-			   char *data, size_t data_size)
+static int hpfs_remount_fs(struct super_block *s, int *flags, char *data)
 {
 	kuid_t uid;
 	kgid_t gid;
@@ -541,8 +540,7 @@ static const struct super_operations hpfs_sops =
 	.show_options	= hpfs_show_options,
 };
 
-static int hpfs_fill_super(struct super_block *s,
-			   void *options, size_t data_size, int silent)
+static int hpfs_fill_super(struct super_block *s, void *options, int silent)
 {
 	struct buffer_head *bh0, *bh1, *bh2;
 	struct hpfs_boot_block *bootblock;
@@ -759,10 +757,9 @@ bail0:
 }
 
 static struct dentry *hpfs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  hpfs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, hpfs_fill_super);
 }
 
 static struct file_system_type hpfs_fs_type = {

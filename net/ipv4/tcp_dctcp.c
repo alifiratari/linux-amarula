@@ -55,6 +55,7 @@ struct dctcp {
 	u32 dctcp_alpha;
 	u32 next_seq;
 	u32 ce_state;
+	u32 delayed_ack_reserved;
 	u32 loss_cwnd;
 };
 
@@ -95,6 +96,7 @@ static void dctcp_init(struct sock *sk)
 
 		ca->dctcp_alpha = min(dctcp_alpha_on_init, DCTCP_MAX_ALPHA);
 
+		ca->delayed_ack_reserved = 0;
 		ca->loss_cwnd = 0;
 		ca->ce_state = 0;
 
@@ -132,8 +134,7 @@ static void dctcp_ce_state_0_to_1(struct sock *sk)
 	/* State has changed from CE=0 to CE=1 and delayed
 	 * ACK has not sent yet.
 	 */
-	if (!ca->ce_state &&
-	    inet_csk(sk)->icsk_ack.pending & ICSK_ACK_TIMER) {
+	if (!ca->ce_state && ca->delayed_ack_reserved) {
 		u32 tmp_rcv_nxt;
 
 		/* Save current rcv_nxt. */
@@ -163,8 +164,7 @@ static void dctcp_ce_state_1_to_0(struct sock *sk)
 	/* State has changed from CE=1 to CE=0 and delayed
 	 * ACK has not sent yet.
 	 */
-	if (ca->ce_state &&
-	    inet_csk(sk)->icsk_ack.pending & ICSK_ACK_TIMER) {
+	if (ca->ce_state && ca->delayed_ack_reserved) {
 		u32 tmp_rcv_nxt;
 
 		/* Save current rcv_nxt. */
@@ -248,6 +248,25 @@ static void dctcp_state(struct sock *sk, u8 new_state)
 	}
 }
 
+static void dctcp_update_ack_reserved(struct sock *sk, enum tcp_ca_event ev)
+{
+	struct dctcp *ca = inet_csk_ca(sk);
+
+	switch (ev) {
+	case CA_EVENT_DELAYED_ACK:
+		if (!ca->delayed_ack_reserved)
+			ca->delayed_ack_reserved = 1;
+		break;
+	case CA_EVENT_NON_DELAYED_ACK:
+		if (ca->delayed_ack_reserved)
+			ca->delayed_ack_reserved = 0;
+		break;
+	default:
+		/* Don't care for the rest. */
+		break;
+	}
+}
+
 static void dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 {
 	switch (ev) {
@@ -256,6 +275,10 @@ static void dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 		break;
 	case CA_EVENT_ECN_NO_CE:
 		dctcp_ce_state_1_to_0(sk);
+		break;
+	case CA_EVENT_DELAYED_ACK:
+	case CA_EVENT_NON_DELAYED_ACK:
+		dctcp_update_ack_reserved(sk, ev);
 		break;
 	default:
 		/* Don't care for the rest. */

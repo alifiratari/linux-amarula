@@ -156,9 +156,6 @@ static void amdgpu_vm_bo_base_init(struct amdgpu_vm_bo_base *base,
 		return;
 	list_add_tail(&base->bo_list, &bo->va);
 
-	if (bo->tbo.type == ttm_bo_type_kernel)
-		list_move(&base->vm_status, &vm->relocated);
-
 	if (bo->tbo.resv != vm->root.base.bo->tbo.resv)
 		return;
 
@@ -543,6 +540,7 @@ static int amdgpu_vm_alloc_levels(struct amdgpu_device *adev,
 			pt->parent = amdgpu_bo_ref(parent->base.bo);
 
 			amdgpu_vm_bo_base_init(&entry->base, vm, pt);
+			list_move(&entry->base.vm_status, &vm->relocated);
 		}
 
 		if (level < AMDGPU_VM_PTB) {
@@ -1084,7 +1082,7 @@ restart:
 					   struct amdgpu_vm_bo_base,
 					   vm_status);
 		bo_base->moved = false;
-		list_del_init(&bo_base->vm_status);
+		list_move(&bo_base->vm_status, &vm->idle);
 
 		bo = bo_base->bo->parent;
 		if (!bo)
@@ -1569,7 +1567,7 @@ static int amdgpu_vm_bo_split_mapping(struct amdgpu_device *adev,
 		if (nodes) {
 			addr = nodes->start << PAGE_SHIFT;
 			max_entries = (nodes->size - pfn) *
-				AMDGPU_GPU_PAGES_IN_CPU_PAGE;
+				(PAGE_SIZE / AMDGPU_GPU_PAGE_SIZE);
 		} else {
 			addr = 0;
 			max_entries = S64_MAX;
@@ -1580,7 +1578,7 @@ static int amdgpu_vm_bo_split_mapping(struct amdgpu_device *adev,
 
 			max_entries = min(max_entries, 16ull * 1024ull);
 			for (count = 1;
-			     count < max_entries / AMDGPU_GPU_PAGES_IN_CPU_PAGE;
+			     count < max_entries / (PAGE_SIZE / AMDGPU_GPU_PAGE_SIZE);
 			     ++count) {
 				uint64_t idx = pfn + count;
 
@@ -1594,7 +1592,7 @@ static int amdgpu_vm_bo_split_mapping(struct amdgpu_device *adev,
 				dma_addr = pages_addr;
 			} else {
 				addr = pages_addr[pfn];
-				max_entries = count * AMDGPU_GPU_PAGES_IN_CPU_PAGE;
+				max_entries = count * (PAGE_SIZE / AMDGPU_GPU_PAGE_SIZE);
 			}
 
 		} else if (flags & AMDGPU_PTE_VALID) {
@@ -1609,7 +1607,7 @@ static int amdgpu_vm_bo_split_mapping(struct amdgpu_device *adev,
 		if (r)
 			return r;
 
-		pfn += (last - start + 1) / AMDGPU_GPU_PAGES_IN_CPU_PAGE;
+		pfn += (last - start + 1) / (PAGE_SIZE / AMDGPU_GPU_PAGE_SIZE);
 		if (nodes && nodes->size == pfn) {
 			pfn = 0;
 			++nodes;
@@ -2645,7 +2643,7 @@ error_free_root:
 	vm->root.base.bo = NULL;
 
 error_free_sched_entity:
-	drm_sched_entity_destroy(&ring->sched, &vm->entity);
+	drm_sched_entity_fini(&ring->sched, &vm->entity);
 
 	return r;
 }
@@ -2782,7 +2780,7 @@ void amdgpu_vm_fini(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 		spin_unlock_irqrestore(&adev->vm_manager.pasid_lock, flags);
 	}
 
-	drm_sched_entity_destroy(vm->entity.sched, &vm->entity);
+	drm_sched_entity_fini(vm->entity.sched, &vm->entity);
 
 	if (!RB_EMPTY_ROOT(&vm->va.rb_root)) {
 		dev_err(adev->dev, "still active bo inside vm\n");

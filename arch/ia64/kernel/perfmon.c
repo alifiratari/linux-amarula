@@ -611,8 +611,7 @@ pfm_unprotect_ctx_ctxsw(pfm_context_t *x, unsigned long f)
 static const struct dentry_operations pfmfs_dentry_operations;
 
 static struct dentry *
-pfmfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
-	    void *data, size_t data_size)
+pfmfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data)
 {
 	return mount_pseudo(fs_type, "pfm:", NULL, &pfmfs_dentry_operations,
 			PFMFS_MAGIC);
@@ -2293,7 +2292,6 @@ pfm_smpl_buffer_alloc(struct task_struct *task, struct file *filp, pfm_context_t
 	vma->vm_file	     = get_file(filp);
 	vma->vm_flags	     = VM_READ|VM_MAYREAD|VM_DONTEXPAND|VM_DONTDUMP;
 	vma->vm_page_prot    = PAGE_READONLY; /* XXX may need to change */
-	vma->vm_ops          = &dummy_vm_ops;
 
 	/*
 	 * Now we have everything we need and we can initialize
@@ -2686,7 +2684,6 @@ pfm_context_create(pfm_context_t *ctx, void *arg, int count, struct pt_regs *reg
 	 * initialize soft PMU state
 	 */
 	pfm_reset_pmu_state(ctx);
-	filp->f_mode |= FMODE_OPENED;
 
 	fd_install(fd, filp);
 

@@ -58,87 +58,142 @@ id's until they get an error.
     :stub-columns: 0
     :widths: 1 1 1 1 8
 
-    *  -  __u32
+
+    -  .. row 1
+
+       -  __u32
+
        -  ``id``
+
        -
        -
        -  Entity id, set by the application. When the id is or'ed with
 	  ``MEDIA_ENT_ID_FLAG_NEXT``, the driver clears the flag and returns
 	  the first entity with a larger id.
 
-    *  -  char
+    -  .. row 2
+
+       -  char
+
        -  ``name``\ [32]
+
        -
        -
        -  Entity name as an UTF-8 NULL-terminated string.
 
-    *  -  __u32
+    -  .. row 3
+
+       -  __u32
+
        -  ``type``
+
        -
        -
        -  Entity type, see :ref:`media-entity-functions` for details.
 
-    *  -  __u32
+    -  .. row 4
+
+       -  __u32
+
        -  ``revision``
+
        -
        -
        -  Entity revision. Always zero (obsolete)
 
-    *  -  __u32
+    -  .. row 5
+
+       -  __u32
+
        -  ``flags``
+
        -
        -
        -  Entity flags, see :ref:`media-entity-flag` for details.
 
-    *  -  __u32
+    -  .. row 6
+
+       -  __u32
+
        -  ``group_id``
+
        -
        -
        -  Entity group ID. Always zero (obsolete)
 
-    *  -  __u16
+    -  .. row 7
+
+       -  __u16
+
        -  ``pads``
+
        -
        -
        -  Number of pads
 
-    *  -  __u16
+    -  .. row 8
+
+       -  __u16
+
        -  ``links``
+
        -
        -
        -  Total number of outbound links. Inbound links are not counted in
 	  this field.
 
-    *  -  __u32
+    -  .. row 9
+
+       -  __u32
+
        -  ``reserved[4]``
+
        -
        -
        -  Reserved for future extensions. Drivers and applications must set
           the array to zero.
 
-    *  -  union
+    -  .. row 10
 
-    *  -
+       -  union
+
+    -  .. row 11
+
+       -
        -  struct
+
        -  ``dev``
+
        -
        -  Valid for (sub-)devices that create a single device node.
 
-    *  -
+    -  .. row 12
+
+       -
        -
        -  __u32
+
        -  ``major``
+
        -  Device node major number.
 
-    *  -
+    -  .. row 13
+
+       -
        -
        -  __u32
+
        -  ``minor``
+
        -  Device node minor number.
 
-    *  -
+    -  .. row 14
+
+       -
        -  __u8
+
        -  ``raw``\ [184]
+
        -
        -
 

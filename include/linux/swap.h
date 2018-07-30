@@ -172,9 +172,8 @@ enum {
 	SWP_PAGE_DISCARD = (1 << 9),	/* freed swap page-cluster discards */
 	SWP_STABLE_WRITES = (1 << 10),	/* no overwrite PG_writeback pages */
 	SWP_SYNCHRONOUS_IO = (1 << 11),	/* synchronous IO is efficient */
-	SWP_VALID	= (1 << 12),	/* swap is valid to be operated on? */
 					/* add others here before... */
-	SWP_SCANNING	= (1 << 13),	/* refcount in scan_swap_map */
+	SWP_SCANNING	= (1 << 12),	/* refcount in scan_swap_map */
 };
 
 #define SWAP_CLUSTER_MAX 32UL
@@ -297,15 +296,20 @@ struct vma_swap_readahead {
 
 /* linux/mm/workingset.c */
 void *workingset_eviction(struct address_space *mapping, struct page *page);
-void workingset_refault(struct page *page, void *shadow);
+bool workingset_refault(void *shadow);
 void workingset_activation(struct page *page);
 
-/* Only track the nodes of mappings with shadow entries */
-void workingset_update_node(struct xa_node *node);
-#define mapping_set_update(xas, mapping) do {				\
-	if (!dax_mapping(mapping) && !shmem_mapping(mapping))		\
-		xas_set_update(xas, workingset_update_node);		\
-} while (0)
+/* Do not use directly, use workingset_lookup_update */
+void workingset_update_node(struct radix_tree_node *node);
+
+/* Returns workingset_update_node() if the mapping has shadow entries. */
+#define workingset_lookup_update(mapping)				\
+({									\
+	radix_tree_update_node_t __helper = workingset_update_node;	\
+	if (dax_mapping(mapping) || shmem_mapping(mapping))		\
+		__helper = NULL;					\
+	__helper;							\
+})
 
 /* linux/mm/page_alloc.c */
 extern unsigned long totalram_pages;
@@ -404,7 +408,7 @@ extern void show_swap_cache_info(void);
 extern int add_to_swap(struct page *page);
 extern int add_to_swap_cache(struct page *, swp_entry_t, gfp_t);
 extern int __add_to_swap_cache(struct page *page, swp_entry_t entry);
-extern void __delete_from_swap_cache(struct page *, swp_entry_t entry);
+extern void __delete_from_swap_cache(struct page *);
 extern void delete_from_swap_cache(struct page *);
 extern void free_page_and_swap_cache(struct page *);
 extern void free_pages_and_swap_cache(struct page **, int);
@@ -456,7 +460,7 @@ extern unsigned int count_swap_pages(int, int);
 extern sector_t map_swap_page(struct page *, struct block_device **);
 extern sector_t swapdev_block(int, pgoff_t);
 extern int page_swapcount(struct page *);
-extern int __swap_count(swp_entry_t entry);
+extern int __swap_count(struct swap_info_struct *si, swp_entry_t entry);
 extern int __swp_swapcount(swp_entry_t entry);
 extern int swp_swapcount(swp_entry_t entry);
 extern struct swap_info_struct *page_swap_info(struct page *);
@@ -466,12 +470,6 @@ extern int try_to_free_swap(struct page *);
 struct backing_dev_info;
 extern int init_swap_address_space(unsigned int type, unsigned long nr_pages);
 extern void exit_swap_address_space(unsigned int type);
-extern struct swap_info_struct *get_swap_device(swp_entry_t entry);
-
-static inline void put_swap_device(struct swap_info_struct *si)
-{
-	preempt_enable();
-}
 
 #else /* CONFIG_SWAP */
 
@@ -564,8 +562,7 @@ static inline int add_to_swap_cache(struct page *page, swp_entry_t entry,
 	return -1;
 }
 
-static inline void __delete_from_swap_cache(struct page *page,
-							swp_entry_t entry)
+static inline void __delete_from_swap_cache(struct page *page)
 {
 }
 
@@ -578,7 +575,7 @@ static inline int page_swapcount(struct page *page)
 	return 0;
 }
 
-static inline int __swap_count(swp_entry_t entry)
+static inline int __swap_count(struct swap_info_struct *si, swp_entry_t entry)
 {
 	return 0;
 }
@@ -632,20 +629,11 @@ static inline int mem_cgroup_swappiness(struct mem_cgroup *memcg)
 
 	return memcg->swappiness;
 }
+
 #else
 static inline int mem_cgroup_swappiness(struct mem_cgroup *mem)
 {
 	return vm_swappiness;
-}
-#endif
-
-#if defined(CONFIG_SWAP) && defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
-extern void mem_cgroup_throttle_swaprate(struct mem_cgroup *memcg, int node,
-					 gfp_t gfp_mask);
-#else
-static inline void mem_cgroup_throttle_swaprate(struct mem_cgroup *memcg,
-						int node, gfp_t gfp_mask)
-{
 }
 #endif
 

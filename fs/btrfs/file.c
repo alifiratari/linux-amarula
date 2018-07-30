@@ -5,11 +5,14 @@
 
 #include <linux/fs.h>
 #include <linux/pagemap.h>
+#include <linux/highmem.h>
 #include <linux/time.h>
 #include <linux/init.h>
 #include <linux/string.h>
 #include <linux/backing-dev.h>
+#include <linux/mpage.h>
 #include <linux/falloc.h>
+#include <linux/swap.h>
 #include <linux/writeback.h>
 #include <linux/compat.h>
 #include <linux/slab.h>
@@ -80,7 +83,7 @@ static int __compare_inode_defrag(struct inode_defrag *defrag1,
 static int __btrfs_add_inode_defrag(struct btrfs_inode *inode,
 				    struct inode_defrag *defrag)
 {
-	struct btrfs_fs_info *fs_info = inode->root->fs_info;
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
 	struct inode_defrag *entry;
 	struct rb_node **p;
 	struct rb_node *parent = NULL;
@@ -132,8 +135,8 @@ static inline int __need_auto_defrag(struct btrfs_fs_info *fs_info)
 int btrfs_add_inode_defrag(struct btrfs_trans_handle *trans,
 			   struct btrfs_inode *inode)
 {
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
 	struct btrfs_root *root = inode->root;
-	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct inode_defrag *defrag;
 	u64 transid;
 	int ret;
@@ -182,7 +185,7 @@ int btrfs_add_inode_defrag(struct btrfs_trans_handle *trans,
 static void btrfs_requeue_inode_defrag(struct btrfs_inode *inode,
 				       struct inode_defrag *defrag)
 {
-	struct btrfs_fs_info *fs_info = inode->root->fs_info;
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
 	int ret;
 
 	if (!__need_auto_defrag(fs_info))
@@ -531,15 +534,6 @@ int btrfs_dirty_pages(struct inode *inode, struct page **pages,
 
 	end_of_last_block = start_pos + num_bytes - 1;
 
-	/*
-	 * the pages may have already been dirty, clear out old accounting
-	 * so we can set things up properly
-	 */
-	clear_extent_bit(&BTRFS_I(inode)->io_tree, start_pos, end_of_last_block,
-			 EXTENT_DIRTY | EXTENT_DELALLOC |
-			 EXTENT_DO_ACCOUNTING | EXTENT_DEFRAG, 0, 0,
-			 cached);
-
 	if (!btrfs_is_free_space_inode(BTRFS_I(inode))) {
 		if (start_pos >= isize &&
 		    !(BTRFS_I(inode)->flags & BTRFS_INODE_PREALLOC)) {
@@ -839,7 +833,8 @@ next_slot:
 				btrfs_file_extent_num_bytes(leaf, fi);
 		} else if (extent_type == BTRFS_FILE_EXTENT_INLINE) {
 			extent_end = key.offset +
-				btrfs_file_extent_ram_bytes(leaf, fi);
+				btrfs_file_extent_inline_len(leaf,
+						     path->slots[0], fi);
 		} else {
 			/* can't happen */
 			BUG();
@@ -1138,7 +1133,7 @@ static int extent_mergeable(struct extent_buffer *leaf, int slot,
 int btrfs_mark_extent_written(struct btrfs_trans_handle *trans,
 			      struct btrfs_inode *inode, u64 start, u64 end)
 {
-	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
 	struct btrfs_root *root = inode->root;
 	struct extent_buffer *leaf;
 	struct btrfs_path *path;
@@ -1475,7 +1470,7 @@ lock_and_cleanup_extent_if_need(struct btrfs_inode *inode, struct page **pages,
 				u64 *lockstart, u64 *lockend,
 				struct extent_state **cached_state)
 {
-	struct btrfs_fs_info *fs_info = inode->root->fs_info;
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
 	u64 start_pos;
 	u64 last_pos;
 	int i;
@@ -1509,27 +1504,18 @@ lock_and_cleanup_extent_if_need(struct btrfs_inode *inode, struct page **pages,
 		}
 		if (ordered)
 			btrfs_put_ordered_extent(ordered);
-
+		clear_extent_bit(&inode->io_tree, start_pos, last_pos,
+				 EXTENT_DIRTY | EXTENT_DELALLOC |
+				 EXTENT_DO_ACCOUNTING | EXTENT_DEFRAG,
+				 0, 0, cached_state);
 		*lockstart = start_pos;
 		*lockend = last_pos;
 		ret = 1;
 	}
 
-	/*
-	 * It's possible the pages are dirty right now, but we don't want
-	 * to clean them yet because copy_from_user may catch a page fault
-	 * and we might have to fall back to one page at a time.  If that
-	 * happens, we'll unlock these pages and we'd have a window where
-	 * reclaim could sneak in and drop the once-dirty page on the floor
-	 * without writing it.
-	 *
-	 * We have the pages locked and the extent range locked, so there's
-	 * no way someone can start IO on any dirty pages in this range.
-	 *
-	 * we'll call btrfs_dirty_pages() later on, and that will flip around
-	 * delalloc bits and dirty the pages as required.
-	 */
 	for (i = 0; i < num_pages; i++) {
+		if (clear_page_dirty_for_io(pages[i]))
+			account_page_redirty(pages[i]);
 		set_page_extent_mapped(pages[i]);
 		WARN_ON(!PageLocked(pages[i]));
 	}
@@ -1540,7 +1526,7 @@ lock_and_cleanup_extent_if_need(struct btrfs_inode *inode, struct page **pages,
 static noinline int check_can_nocow(struct btrfs_inode *inode, loff_t pos,
 				    size_t *write_bytes)
 {
-	struct btrfs_fs_info *fs_info = inode->root->fs_info;
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
 	struct btrfs_root *root = inode->root;
 	struct btrfs_ordered_extent *ordered;
 	u64 lockstart, lockend;
@@ -1583,11 +1569,10 @@ static noinline int check_can_nocow(struct btrfs_inode *inode, loff_t pos,
 	return ret;
 }
 
-static noinline ssize_t btrfs_buffered_write(struct kiocb *iocb,
-					       struct iov_iter *i)
+static noinline ssize_t __btrfs_buffered_write(struct file *file,
+					       struct iov_iter *i,
+					       loff_t pos)
 {
-	struct file *file = iocb->ki_filp;
-	loff_t pos = iocb->ki_pos;
 	struct inode *inode = file_inode(file);
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	struct btrfs_root *root = BTRFS_I(inode)->root;
@@ -1819,7 +1804,7 @@ static ssize_t __btrfs_direct_write(struct kiocb *iocb, struct iov_iter *from)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file_inode(file);
-	loff_t pos;
+	loff_t pos = iocb->ki_pos;
 	ssize_t written;
 	ssize_t written_buffered;
 	loff_t endbyte;
@@ -1830,8 +1815,8 @@ static ssize_t __btrfs_direct_write(struct kiocb *iocb, struct iov_iter *from)
 	if (written < 0 || !iov_iter_count(from))
 		return written;
 
-	pos = iocb->ki_pos;
-	written_buffered = btrfs_buffered_write(iocb, from);
+	pos += written;
+	written_buffered = __btrfs_buffered_write(file, from, pos);
 	if (written_buffered < 0) {
 		err = written_buffered;
 		goto out;
@@ -1968,7 +1953,7 @@ static ssize_t btrfs_file_write_iter(struct kiocb *iocb,
 	if (iocb->ki_flags & IOCB_DIRECT) {
 		num_written = __btrfs_direct_write(iocb, from);
 	} else {
-		num_written = btrfs_buffered_write(iocb, from);
+		num_written = __btrfs_buffered_write(file, from, pos);
 		if (num_written > 0)
 			iocb->ki_pos = pos + num_written;
 		if (clean_page)
@@ -2083,12 +2068,53 @@ int btrfs_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 	atomic_inc(&root->log_batch);
 	full_sync = test_bit(BTRFS_INODE_NEEDS_FULL_SYNC,
 			     &BTRFS_I(inode)->runtime_flags);
-
 	/*
-	 * We have to do this here to avoid the priority inversion of waiting on
-	 * IO of a lower priority task while holding a transaciton open.
+	 * We might have have had more pages made dirty after calling
+	 * start_ordered_ops and before acquiring the inode's i_mutex.
 	 */
-	ret = btrfs_wait_ordered_range(inode, start, len);
+	if (full_sync) {
+		/*
+		 * For a full sync, we need to make sure any ordered operations
+		 * start and finish before we start logging the inode, so that
+		 * all extents are persisted and the respective file extent
+		 * items are in the fs/subvol btree.
+		 */
+		ret = btrfs_wait_ordered_range(inode, start, len);
+	} else {
+		/*
+		 * Start any new ordered operations before starting to log the
+		 * inode. We will wait for them to finish in btrfs_sync_log().
+		 *
+		 * Right before acquiring the inode's mutex, we might have new
+		 * writes dirtying pages, which won't immediately start the
+		 * respective ordered operations - that is done through the
+		 * fill_delalloc callbacks invoked from the writepage and
+		 * writepages address space operations. So make sure we start
+		 * all ordered operations before starting to log our inode. Not
+		 * doing this means that while logging the inode, writeback
+		 * could start and invoke writepage/writepages, which would call
+		 * the fill_delalloc callbacks (cow_file_range,
+		 * submit_compressed_extents). These callbacks add first an
+		 * extent map to the modified list of extents and then create
+		 * the respective ordered operation, which means in
+		 * tree-log.c:btrfs_log_inode() we might capture all existing
+		 * ordered operations (with btrfs_get_logged_extents()) before
+		 * the fill_delalloc callback adds its ordered operation, and by
+		 * the time we visit the modified list of extent maps (with
+		 * btrfs_log_changed_extents()), we see and process the extent
+		 * map they created. We then use the extent map to construct a
+		 * file extent item for logging without waiting for the
+		 * respective ordered operation to finish - this file extent
+		 * item points to a disk location that might not have yet been
+		 * written to, containing random data - so after a crash a log
+		 * replay will make our inode have file extent items that point
+		 * to disk locations containing invalid data, as we returned
+		 * success to userspace without waiting for the respective
+		 * ordered operation to finish, because it wasn't captured by
+		 * btrfs_get_logged_extents().
+		 */
+		ret = start_ordered_ops(inode, start, end);
+	}
 	if (ret) {
 		inode_unlock(inode);
 		goto out;
@@ -2213,6 +2239,13 @@ int btrfs_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 				goto out;
 			}
 		}
+		if (!full_sync) {
+			ret = btrfs_wait_ordered_range(inode, start, len);
+			if (ret) {
+				btrfs_end_transaction(trans);
+				goto out;
+			}
+		}
 		ret = btrfs_commit_transaction(trans);
 	} else {
 		ret = btrfs_end_transaction(trans);
@@ -2277,7 +2310,7 @@ static int fill_holes(struct btrfs_trans_handle *trans,
 		struct btrfs_inode *inode,
 		struct btrfs_path *path, u64 offset, u64 end)
 {
-	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
 	struct btrfs_root *root = inode->root;
 	struct extent_buffer *leaf;
 	struct btrfs_file_extent_item *fi;

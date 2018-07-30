@@ -435,24 +435,45 @@ void i40iw_process_aeq(struct i40iw_device *iwdev)
 }
 
 /**
- * i40iw_cqp_manage_abvpt_cmd - send cqp command manage abpvt
+ * i40iw_manage_apbvt - add or delete tcp port
  * @iwdev: iwarp device
  * @accel_local_port: port for apbvt
  * @add_port: add or delete port
  */
-static enum i40iw_status_code
-i40iw_cqp_manage_abvpt_cmd(struct i40iw_device *iwdev,
-			   u16 accel_local_port,
-			   bool add_port)
+int i40iw_manage_apbvt(struct i40iw_device *iwdev, u16 accel_local_port, bool add_port)
 {
 	struct i40iw_apbvt_info *info;
 	struct i40iw_cqp_request *cqp_request;
 	struct cqp_commands_info *cqp_info;
-	enum i40iw_status_code status;
+	unsigned long flags;
+	struct i40iw_cm_core *cm_core = &iwdev->cm_core;
+	enum i40iw_status_code status = 0;
+	bool in_use;
+
+	/* apbvt_lock is held across CQP delete APBVT OP (non-waiting) to
+	 * protect against race where add APBVT CQP can race ahead of the delete
+	 * APBVT for same port.
+	 */
+	spin_lock_irqsave(&cm_core->apbvt_lock, flags);
+
+	if (!add_port) {
+		in_use = i40iw_port_in_use(cm_core, accel_local_port);
+		if (in_use)
+			goto exit;
+		clear_bit(accel_local_port, cm_core->ports_in_use);
+	} else {
+		in_use = test_and_set_bit(accel_local_port,
+					  cm_core->ports_in_use);
+		spin_unlock_irqrestore(&cm_core->apbvt_lock, flags);
+		if (in_use)
+			return 0;
+	}
 
 	cqp_request = i40iw_get_cqp_request(&iwdev->cqp, add_port);
-	if (!cqp_request)
-		return I40IW_ERR_NO_MEMORY;
+	if (!cqp_request) {
+		status = -ENOMEM;
+		goto exit;
+	}
 
 	cqp_info = &cqp_request->info;
 	info = &cqp_info->in.u.manage_apbvt_entry.info;
@@ -468,51 +489,11 @@ i40iw_cqp_manage_abvpt_cmd(struct i40iw_device *iwdev,
 	status = i40iw_handle_cqp_op(iwdev, cqp_request);
 	if (status)
 		i40iw_pr_err("CQP-OP Manage APBVT entry fail");
+exit:
+	if (!add_port)
+		spin_unlock_irqrestore(&cm_core->apbvt_lock, flags);
 
 	return status;
-}
-
-/**
- * i40iw_manage_apbvt - add or delete tcp port
- * @iwdev: iwarp device
- * @accel_local_port: port for apbvt
- * @add_port: add or delete port
- */
-enum i40iw_status_code i40iw_manage_apbvt(struct i40iw_device *iwdev,
-					  u16 accel_local_port,
-					  bool add_port)
-{
-	struct i40iw_cm_core *cm_core = &iwdev->cm_core;
-	enum i40iw_status_code status;
-	unsigned long flags;
-	bool in_use;
-
-	/* apbvt_lock is held across CQP delete APBVT OP (non-waiting) to
-	 * protect against race where add APBVT CQP can race ahead of the delete
-	 * APBVT for same port.
-	 */
-	if (add_port) {
-		spin_lock_irqsave(&cm_core->apbvt_lock, flags);
-		in_use = __test_and_set_bit(accel_local_port,
-					    cm_core->ports_in_use);
-		spin_unlock_irqrestore(&cm_core->apbvt_lock, flags);
-		if (in_use)
-			return 0;
-		return i40iw_cqp_manage_abvpt_cmd(iwdev, accel_local_port,
-						  true);
-	} else {
-		spin_lock_irqsave(&cm_core->apbvt_lock, flags);
-		in_use = i40iw_port_in_use(cm_core, accel_local_port);
-		if (in_use) {
-			spin_unlock_irqrestore(&cm_core->apbvt_lock, flags);
-			return 0;
-		}
-		__clear_bit(accel_local_port, cm_core->ports_in_use);
-		status = i40iw_cqp_manage_abvpt_cmd(iwdev, accel_local_port,
-						    false);
-		spin_unlock_irqrestore(&cm_core->apbvt_lock, flags);
-		return status;
-	}
 }
 
 /**

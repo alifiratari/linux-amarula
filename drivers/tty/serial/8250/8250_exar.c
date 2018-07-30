@@ -272,32 +272,8 @@ static int xr17v35x_register_gpio(struct pci_dev *pcidev,
 	return 0;
 }
 
-static int generic_rs485_config(struct uart_port *port,
-				struct serial_rs485 *rs485)
-{
-	bool is_rs485 = !!(rs485->flags & SER_RS485_ENABLED);
-	u8 __iomem *p = port->membase;
-	u8 value;
-
-	value = readb(p + UART_EXAR_FCTR);
-	if (is_rs485)
-		value |= UART_FCTR_EXAR_485;
-	else
-		value &= ~UART_FCTR_EXAR_485;
-
-	writeb(value, p + UART_EXAR_FCTR);
-
-	if (is_rs485)
-		writeb(UART_EXAR_RS485_DLY(4), p + UART_MSR);
-
-	port->rs485 = *rs485;
-
-	return 0;
-}
-
 static const struct exar8250_platform exar8250_default_platform = {
 	.register_gpio = xr17v35x_register_gpio,
-	.rs485_config = generic_rs485_config,
 };
 
 static int iot2040_rs485_config(struct uart_port *port,
@@ -330,7 +306,19 @@ static int iot2040_rs485_config(struct uart_port *port,
 	value |= mode;
 	writeb(value, p + UART_EXAR_MPIOLVL_7_0);
 
-	return generic_rs485_config(port, rs485);
+	value = readb(p + UART_EXAR_FCTR);
+	if (is_rs485)
+		value |= UART_FCTR_EXAR_485;
+	else
+		value &= ~UART_FCTR_EXAR_485;
+	writeb(value, p + UART_EXAR_FCTR);
+
+	if (is_rs485)
+		writeb(UART_EXAR_RS485_DLY(4), p + UART_MSR);
+
+	port->rs485 = *rs485;
+
+	return 0;
 }
 
 static const struct property_entry iot2040_gpio_properties[] = {

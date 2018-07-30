@@ -43,8 +43,6 @@ static inline int __sync_blockdev(struct block_device *bdev, int wait)
 extern void guard_bio_eod(int rw, struct bio *bio);
 extern int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 		get_block_t *get_block, struct iomap *iomap);
-int __generic_write_end(struct inode *inode, loff_t pos, unsigned copied,
-		struct page *page);
 
 /*
  * char_dev.c
@@ -82,10 +80,11 @@ extern void __init mnt_init(void);
 
 extern int __mnt_want_write(struct vfsmount *);
 extern int __mnt_want_write_file(struct file *);
+extern int mnt_want_write_file_path(struct file *);
 extern void __mnt_drop_write(struct vfsmount *);
 extern void __mnt_drop_write_file(struct file *);
+extern void mnt_drop_write_file_path(struct file *);
 
-extern void dissolve_on_fput(struct vfsmount *);
 /*
  * fs_struct.c
  */
@@ -94,19 +93,15 @@ extern void chroot_fs_refs(const struct path *, const struct path *);
 /*
  * file_table.c
  */
-extern struct file *__get_empty_filp(bool account);
-
-static inline struct file *get_empty_filp(void)
-{
-	return __get_empty_filp(true);
-}
+extern struct file *get_empty_filp(void);
 
 /*
  * super.c
  */
-extern int do_remount_sb(struct super_block *, int, void *, size_t, int,
-			 struct fs_context *);
+extern int do_remount_sb(struct super_block *, int, void *, int);
 extern bool trylock_super(struct super_block *sb);
+extern struct dentry *mount_fs(struct file_system_type *,
+			       int, const char *, void *);
 extern struct super_block *user_get_super(dev_t);
 
 /*
@@ -130,7 +125,9 @@ int do_fchmodat(int dfd, const char __user *filename, umode_t mode);
 int do_fchownat(int dfd, const char __user *filename, uid_t user, gid_t group,
 		int flag);
 
+extern int open_check_o_direct(struct file *f);
 extern int vfs_open(const struct path *, struct file *, const struct cred *);
+extern struct file *filp_clone_open(struct file *);
 
 /*
  * inode.c
@@ -138,6 +135,13 @@ extern int vfs_open(const struct path *, struct file *, const struct cred *);
 extern long prune_icache_sb(struct super_block *sb, struct shrink_control *sc);
 extern void inode_add_lru(struct inode *inode);
 extern int dentry_needs_remove_privs(struct dentry *dentry);
+
+extern bool __atime_needs_update(const struct path *, struct inode *, bool);
+static inline bool atime_needs_update_rcu(const struct path *path,
+					  struct inode *inode)
+{
+	return __atime_needs_update(path, inode, true);
+}
 
 /*
  * fs-writeback.c
@@ -181,6 +185,7 @@ extern const struct dentry_operations ns_dentry_operations;
  */
 extern int do_vfs_ioctl(struct file *file, unsigned int fd, unsigned int cmd,
 		    unsigned long arg);
+extern long vfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
 /*
  * iomap support:

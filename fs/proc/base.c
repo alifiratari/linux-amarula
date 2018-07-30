@@ -463,7 +463,7 @@ static int lstats_show_proc(struct seq_file *m, void *v)
 	if (!task)
 		return -ESRCH;
 	seq_puts(m, "Latency Top version : v0.1\n");
-	for (i = 0; i < LT_SAVECOUNT; i++) {
+	for (i = 0; i < 32; i++) {
 		struct latency_record *lr = &task->latency_record[i];
 		if (lr->backtrace[0]) {
 			int q;
@@ -1366,8 +1366,10 @@ static ssize_t proc_fail_nth_read(struct file *file, char __user *buf,
 	if (!task)
 		return -ESRCH;
 	len = snprintf(numbuf, sizeof(numbuf), "%u\n", task->fail_nth);
+	len = simple_read_from_buffer(buf, count, ppos, numbuf, len);
 	put_task_struct(task);
-	return simple_read_from_buffer(buf, count, ppos, numbuf, len);
+
+	return len;
 }
 
 static const struct file_operations proc_fail_nth_operations = {
@@ -2517,47 +2519,47 @@ static ssize_t proc_pid_attr_write(struct file * file, const char __user * buf,
 				   size_t count, loff_t *ppos)
 {
 	struct inode * inode = file_inode(file);
-	struct task_struct *task;
 	void *page;
-	int rv;
+	ssize_t length;
+	struct task_struct *task = get_proc_task(inode);
 
-	rcu_read_lock();
-	task = pid_task(proc_pid(inode), PIDTYPE_PID);
-	if (!task) {
-		rcu_read_unlock();
-		return -ESRCH;
-	}
+	length = -ESRCH;
+	if (!task)
+		goto out_no_task;
+
 	/* A task may only write its own attributes. */
-	if (current != task) {
-		rcu_read_unlock();
-		return -EACCES;
-	}
-	rcu_read_unlock();
+	length = -EACCES;
+	if (current != task)
+		goto out;
 
 	if (count > PAGE_SIZE)
 		count = PAGE_SIZE;
 
 	/* No partial writes. */
+	length = -EINVAL;
 	if (*ppos != 0)
-		return -EINVAL;
+		goto out;
 
 	page = memdup_user(buf, count);
 	if (IS_ERR(page)) {
-		rv = PTR_ERR(page);
+		length = PTR_ERR(page);
 		goto out;
 	}
 
 	/* Guard against adverse ptrace interaction */
-	rv = mutex_lock_interruptible(&current->signal->cred_guard_mutex);
-	if (rv < 0)
+	length = mutex_lock_interruptible(&current->signal->cred_guard_mutex);
+	if (length < 0)
 		goto out_free;
 
-	rv = security_setprocattr(file->f_path.dentry->d_name.name, page, count);
+	length = security_setprocattr(file->f_path.dentry->d_name.name,
+				      page, count);
 	mutex_unlock(&current->signal->cred_guard_mutex);
 out_free:
 	kfree(page);
 out:
-	return rv;
+	put_task_struct(task);
+out_no_task:
+	return length;
 }
 
 static const struct file_operations proc_pid_attr_operations = {
@@ -2891,21 +2893,6 @@ static int proc_pid_patch_state(struct seq_file *m, struct pid_namespace *ns,
 }
 #endif /* CONFIG_LIVEPATCH */
 
-#ifdef CONFIG_STACKLEAK_METRICS
-static int proc_stack_depth(struct seq_file *m, struct pid_namespace *ns,
-				struct pid *pid, struct task_struct *task)
-{
-	unsigned long prev_depth = THREAD_SIZE -
-				(task->prev_lowest_stack & (THREAD_SIZE - 1));
-	unsigned long depth = THREAD_SIZE -
-				(task->lowest_stack & (THREAD_SIZE - 1));
-
-	seq_printf(m, "previous stack depth: %lu\nstack depth: %lu\n",
-							prev_depth, depth);
-	return 0;
-}
-#endif /* CONFIG_STACKLEAK_METRICS */
-
 /*
  * Thread groups
  */
@@ -3007,9 +2994,6 @@ static const struct pid_entry tgid_base_stuff[] = {
 #ifdef CONFIG_LIVEPATCH
 	ONE("patch_state",  S_IRUSR, proc_pid_patch_state),
 #endif
-#ifdef CONFIG_STACKLEAK_METRICS
-	ONE("stack_depth", S_IRUGO, proc_stack_depth),
-#endif
 };
 
 static int proc_tgid_base_readdir(struct file *file, struct dir_context *ctx)
@@ -3037,7 +3021,7 @@ static const struct inode_operations proc_tgid_base_inode_operations = {
 	.permission	= proc_pid_permission,
 };
 
-static void proc_flush_task_root(struct dentry *proc_root, pid_t pid, pid_t tgid)
+static void proc_flush_task_mnt(struct vfsmount *mnt, pid_t pid, pid_t tgid)
 {
 	struct dentry *dentry, *leader, *dir;
 	char buf[10 + 1];
@@ -3046,7 +3030,7 @@ static void proc_flush_task_root(struct dentry *proc_root, pid_t pid, pid_t tgid
 	name.name = buf;
 	name.len = snprintf(buf, sizeof(buf), "%u", pid);
 	/* no ->d_hash() rejects on procfs */
-	dentry = d_hash_and_lookup(proc_root, &name);
+	dentry = d_hash_and_lookup(mnt->mnt_root, &name);
 	if (dentry) {
 		d_invalidate(dentry);
 		dput(dentry);
@@ -3057,7 +3041,7 @@ static void proc_flush_task_root(struct dentry *proc_root, pid_t pid, pid_t tgid
 
 	name.name = buf;
 	name.len = snprintf(buf, sizeof(buf), "%u", tgid);
-	leader = d_hash_and_lookup(proc_root, &name);
+	leader = d_hash_and_lookup(mnt->mnt_root, &name);
 	if (!leader)
 		goto out;
 
@@ -3087,8 +3071,8 @@ out:
  * @task: task that should be flushed.
  *
  * When flushing dentries from proc, one needs to flush them from global
- * proc and from all the namespaces' procs this task was seen in. This call
- * is supposed to do all of this job.
+ * proc (proc_mnt) and from all the namespaces' procs this task was seen
+ * in. This call is supposed to do all of this job.
  *
  * Looks in the dcache for
  * /proc/@pid
@@ -3112,37 +3096,15 @@ void proc_flush_task(struct task_struct *task)
 	int i;
 	struct pid *pid, *tgid;
 	struct upid *upid;
-	int expected = 1;
 
 	pid = task_pid(task);
 	tgid = task_tgid(task);
-	if (thread_group_leader(task)) {
-		if (task_pgrp(task) == pid)
-			expected++;
-		if (task_session(task) == pid)
-			expected++;
-	}
 
-	/* Nothing to do if proc inodes have not take a reference to pid */
-	if (atomic_read(&pid->count) == expected)
-		return;
-
-	rcu_read_lock();
 	for (i = 0; i <= pid->level; i++) {
-		struct super_block *sb;
 		upid = &pid->numbers[i];
-
-		sb = rcu_dereference(upid->ns->proc_super);
-		if (!sb || !atomic_inc_not_zero(&sb->s_active))
-			continue;
-		rcu_read_unlock();
-
-		proc_flush_task_root(sb->s_root, upid->nr, tgid->numbers[i].nr);
-		deactivate_super(sb);
-
-		rcu_read_lock();
+		proc_flush_task_mnt(upid->ns->proc_mnt, upid->nr,
+					tgid->numbers[i].nr);
 	}
-	rcu_read_unlock();
 }
 
 static struct dentry *proc_pid_instantiate(struct dentry * dentry,

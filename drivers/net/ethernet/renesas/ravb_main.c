@@ -980,13 +980,6 @@ static void ravb_adjust_link(struct net_device *ndev)
 	struct ravb_private *priv = netdev_priv(ndev);
 	struct phy_device *phydev = ndev->phydev;
 	bool new_state = false;
-	unsigned long flags;
-
-	spin_lock_irqsave(&priv->lock, flags);
-
-	/* Disable TX and RX right over here, if E-MAC change is ignored */
-	if (priv->no_avb_link)
-		ravb_rcv_snd_disable(ndev);
 
 	if (phydev->link) {
 		if (phydev->duplex != priv->duplex) {
@@ -1004,20 +997,17 @@ static void ravb_adjust_link(struct net_device *ndev)
 			ravb_modify(ndev, ECMR, ECMR_TXF, 0);
 			new_state = true;
 			priv->link = phydev->link;
+			if (priv->no_avb_link)
+				ravb_rcv_snd_enable(ndev);
 		}
 	} else if (priv->link) {
 		new_state = true;
 		priv->link = 0;
 		priv->speed = 0;
 		priv->duplex = -1;
+		if (priv->no_avb_link)
+			ravb_rcv_snd_disable(ndev);
 	}
-
-	/* Enable TX and RX right over here, if E-MAC change is ignored */
-	if (priv->no_avb_link && phydev->link)
-		ravb_rcv_snd_enable(ndev);
-
-	mmiowb();
-	spin_unlock_irqrestore(&priv->lock, flags);
 
 	if (new_state && netif_msg_link(priv))
 		phy_print_status(phydev);
@@ -1104,6 +1094,75 @@ static int ravb_phy_start(struct net_device *ndev)
 	phy_start(ndev->phydev);
 
 	return 0;
+}
+
+static int ravb_get_link_ksettings(struct net_device *ndev,
+				   struct ethtool_link_ksettings *cmd)
+{
+	struct ravb_private *priv = netdev_priv(ndev);
+	unsigned long flags;
+
+	if (!ndev->phydev)
+		return -ENODEV;
+
+	spin_lock_irqsave(&priv->lock, flags);
+	phy_ethtool_ksettings_get(ndev->phydev, cmd);
+	spin_unlock_irqrestore(&priv->lock, flags);
+
+	return 0;
+}
+
+static int ravb_set_link_ksettings(struct net_device *ndev,
+				   const struct ethtool_link_ksettings *cmd)
+{
+	struct ravb_private *priv = netdev_priv(ndev);
+	unsigned long flags;
+	int error;
+
+	if (!ndev->phydev)
+		return -ENODEV;
+
+	spin_lock_irqsave(&priv->lock, flags);
+
+	/* Disable TX and RX */
+	ravb_rcv_snd_disable(ndev);
+
+	error = phy_ethtool_ksettings_set(ndev->phydev, cmd);
+	if (error)
+		goto error_exit;
+
+	if (cmd->base.duplex == DUPLEX_FULL)
+		priv->duplex = 1;
+	else
+		priv->duplex = 0;
+
+	ravb_set_duplex(ndev);
+
+error_exit:
+	mdelay(1);
+
+	/* Enable TX and RX */
+	ravb_rcv_snd_enable(ndev);
+
+	mmiowb();
+	spin_unlock_irqrestore(&priv->lock, flags);
+
+	return error;
+}
+
+static int ravb_nway_reset(struct net_device *ndev)
+{
+	struct ravb_private *priv = netdev_priv(ndev);
+	int error = -ENODEV;
+	unsigned long flags;
+
+	if (ndev->phydev) {
+		spin_lock_irqsave(&priv->lock, flags);
+		error = phy_start_aneg(ndev->phydev);
+		spin_unlock_irqrestore(&priv->lock, flags);
+	}
+
+	return error;
 }
 
 static u32 ravb_get_msglevel(struct net_device *ndev)
@@ -1318,7 +1377,7 @@ static int ravb_set_wol(struct net_device *ndev, struct ethtool_wolinfo *wol)
 }
 
 static const struct ethtool_ops ravb_ethtool_ops = {
-	.nway_reset		= phy_ethtool_nway_reset,
+	.nway_reset		= ravb_nway_reset,
 	.get_msglevel		= ravb_get_msglevel,
 	.set_msglevel		= ravb_set_msglevel,
 	.get_link		= ethtool_op_get_link,
@@ -1328,8 +1387,8 @@ static const struct ethtool_ops ravb_ethtool_ops = {
 	.get_ringparam		= ravb_get_ringparam,
 	.set_ringparam		= ravb_set_ringparam,
 	.get_ts_info		= ravb_get_ts_info,
-	.get_link_ksettings	= phy_ethtool_get_link_ksettings,
-	.set_link_ksettings	= phy_ethtool_set_link_ksettings,
+	.get_link_ksettings	= ravb_get_link_ksettings,
+	.set_link_ksettings	= ravb_set_link_ksettings,
 	.get_wol		= ravb_get_wol,
 	.set_wol		= ravb_set_wol,
 };
@@ -1597,8 +1656,7 @@ drop:
 }
 
 static u16 ravb_select_queue(struct net_device *ndev, struct sk_buff *skb,
-			     struct net_device *sb_dev,
-			     select_queue_fallback_t fallback)
+			     void *accel_priv, select_queue_fallback_t fallback)
 {
 	/* If skb needs TX timestamp, it is handled in network control queue */
 	return (skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP) ? RAVB_NC :

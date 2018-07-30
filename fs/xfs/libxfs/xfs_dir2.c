@@ -239,10 +239,12 @@ xfs_dir_init(
  */
 int
 xfs_dir_createname(
-	struct xfs_trans	*tp,
-	struct xfs_inode	*dp,
+	xfs_trans_t		*tp,
+	xfs_inode_t		*dp,
 	struct xfs_name		*name,
 	xfs_ino_t		inum,		/* new entry inode number */
+	xfs_fsblock_t		*first,		/* bmap's firstblock */
+	struct xfs_defer_ops	*dfops,		/* bmap's freeblock list */
 	xfs_extlen_t		total)		/* bmap's total block count */
 {
 	struct xfs_da_args	*args;
@@ -250,7 +252,6 @@ xfs_dir_createname(
 	int			v;		/* type-checking value */
 
 	ASSERT(S_ISDIR(VFS_I(dp)->i_mode));
-
 	if (inum) {
 		rval = xfs_dir_ino_validate(tp->t_mountp, inum);
 		if (rval)
@@ -269,6 +270,8 @@ xfs_dir_createname(
 	args->hashval = dp->i_mount->m_dirnameops->hashname(name);
 	args->inumber = inum;
 	args->dp = dp;
+	args->firstblock = first;
+	args->dfops = dfops;
 	args->total = total;
 	args->whichfork = XFS_DATA_FORK;
 	args->trans = tp;
@@ -413,18 +416,19 @@ out_free:
  */
 int
 xfs_dir_removename(
-	struct xfs_trans	*tp,
-	struct xfs_inode	*dp,
-	struct xfs_name		*name,
-	xfs_ino_t		ino,
-	xfs_extlen_t		total)		/* bmap's total block count */
+	xfs_trans_t	*tp,
+	xfs_inode_t	*dp,
+	struct xfs_name	*name,
+	xfs_ino_t	ino,
+	xfs_fsblock_t	*first,		/* bmap's firstblock */
+	struct xfs_defer_ops	*dfops,		/* bmap's freeblock list */
+	xfs_extlen_t	total)		/* bmap's total block count */
 {
-	struct xfs_da_args	*args;
-	int			rval;
-	int			v;		/* type-checking value */
+	struct xfs_da_args *args;
+	int		rval;
+	int		v;		/* type-checking value */
 
 	ASSERT(S_ISDIR(VFS_I(dp)->i_mode));
-	ASSERT(tp->t_dfops);
 	XFS_STATS_INC(dp->i_mount, xs_dir_remove);
 
 	args = kmem_zalloc(sizeof(*args), KM_SLEEP | KM_NOFS);
@@ -438,6 +442,8 @@ xfs_dir_removename(
 	args->hashval = dp->i_mount->m_dirnameops->hashname(name);
 	args->inumber = ino;
 	args->dp = dp;
+	args->firstblock = first;
+	args->dfops = dfops;
 	args->total = total;
 	args->whichfork = XFS_DATA_FORK;
 	args->trans = tp;
@@ -472,18 +478,19 @@ out_free:
  */
 int
 xfs_dir_replace(
-	struct xfs_trans	*tp,
-	struct xfs_inode	*dp,
-	struct xfs_name		*name,		/* name of entry to replace */
-	xfs_ino_t		inum,		/* new inode number */
-	xfs_extlen_t		total)		/* bmap's total block count */
+	xfs_trans_t	*tp,
+	xfs_inode_t	*dp,
+	struct xfs_name	*name,		/* name of entry to replace */
+	xfs_ino_t	inum,		/* new inode number */
+	xfs_fsblock_t	*first,		/* bmap's firstblock */
+	struct xfs_defer_ops	*dfops,		/* bmap's freeblock list */
+	xfs_extlen_t	total)		/* bmap's total block count */
 {
-	struct xfs_da_args	*args;
-	int			rval;
-	int			v;		/* type-checking value */
+	struct xfs_da_args *args;
+	int		rval;
+	int		v;		/* type-checking value */
 
 	ASSERT(S_ISDIR(VFS_I(dp)->i_mode));
-	ASSERT(tp->t_dfops);
 
 	rval = xfs_dir_ino_validate(tp->t_mountp, inum);
 	if (rval)
@@ -500,6 +507,8 @@ xfs_dir_replace(
 	args->hashval = dp->i_mount->m_dirnameops->hashname(name);
 	args->inumber = inum;
 	args->dp = dp;
+	args->firstblock = first;
+	args->dfops = dfops;
 	args->total = total;
 	args->whichfork = XFS_DATA_FORK;
 	args->trans = tp;
@@ -538,7 +547,7 @@ xfs_dir_canenter(
 	xfs_inode_t	*dp,
 	struct xfs_name	*name)		/* name of entry to add */
 {
-	return xfs_dir_createname(tp, dp, name, 0, 0);
+	return xfs_dir_createname(tp, dp, name, 0, NULL, NULL, 0);
 }
 
 /*
@@ -636,17 +645,17 @@ xfs_dir2_isleaf(
  */
 int
 xfs_dir2_shrink_inode(
-	struct xfs_da_args	*args,
-	xfs_dir2_db_t		db,
-	struct xfs_buf		*bp)
+	xfs_da_args_t	*args,
+	xfs_dir2_db_t	db,
+	struct xfs_buf	*bp)
 {
-	xfs_fileoff_t		bno;		/* directory file offset */
-	xfs_dablk_t		da;		/* directory file offset */
-	int			done;		/* bunmap is finished */
-	struct xfs_inode	*dp;
-	int			error;
-	struct xfs_mount	*mp;
-	struct xfs_trans	*tp;
+	xfs_fileoff_t	bno;		/* directory file offset */
+	xfs_dablk_t	da;		/* directory file offset */
+	int		done;		/* bunmap is finished */
+	xfs_inode_t	*dp;
+	int		error;
+	xfs_mount_t	*mp;
+	xfs_trans_t	*tp;
 
 	trace_xfs_dir2_shrink_inode(args, db);
 
@@ -656,7 +665,8 @@ xfs_dir2_shrink_inode(
 	da = xfs_dir2_db_to_da(args->geo, db);
 
 	/* Unmap the fsblock(s). */
-	error = xfs_bunmapi(tp, dp, da, args->geo->fsbcount, 0, 0, &done);
+	error = xfs_bunmapi(tp, dp, da, args->geo->fsbcount, 0, 0,
+			    args->firstblock, args->dfops, &done);
 	if (error) {
 		/*
 		 * ENOSPC actually can happen if we're in a removename with no

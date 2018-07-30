@@ -135,15 +135,15 @@ static const struct dce110_timing_generator_offsets dce100_tg_offsets[] = {
 	.reg_name = mm ## block ## id ## _ ## reg_name
 
 
-static const struct dccg_registers disp_clk_regs = {
+static const struct dce_disp_clk_registers disp_clk_regs = {
 		CLK_COMMON_REG_LIST_DCE_BASE()
 };
 
-static const struct dccg_shift disp_clk_shift = {
+static const struct dce_disp_clk_shift disp_clk_shift = {
 		CLK_COMMON_MASK_SH_LIST_DCE_COMMON_BASE(__SHIFT)
 };
 
-static const struct dccg_mask disp_clk_mask = {
+static const struct dce_disp_clk_mask disp_clk_mask = {
 		CLK_COMMON_MASK_SH_LIST_DCE_COMMON_BASE(_MASK)
 };
 
@@ -644,8 +644,8 @@ static void destruct(struct dce110_resource_pool *pool)
 			dce_aud_destroy(&pool->base.audios[i]);
 	}
 
-	if (pool->base.dccg != NULL)
-		dce_dccg_destroy(&pool->base.dccg);
+	if (pool->base.display_clock != NULL)
+		dce_disp_clk_destroy(&pool->base.display_clock);
 
 	if (pool->base.abm != NULL)
 				dce_abm_destroy(&pool->base.abm);
@@ -678,22 +678,9 @@ bool dce100_validate_bandwidth(
 	struct dc  *dc,
 	struct dc_state *context)
 {
-	int i;
-	bool at_least_one_pipe = false;
-
-	for (i = 0; i < dc->res_pool->pipe_count; i++) {
-		if (context->res_ctx.pipe_ctx[i].stream)
-			at_least_one_pipe = true;
-	}
-
-	if (at_least_one_pipe) {
-		/* TODO implement when needed but for now hardcode max value*/
-		context->bw.dce.dispclk_khz = 681000;
-		context->bw.dce.yclk_khz = 250000 * MEMORY_TYPE_MULTIPLIER;
-	} else {
-		context->bw.dce.dispclk_khz = 0;
-		context->bw.dce.yclk_khz = 0;
-	}
+	/* TODO implement when needed but for now hardcode max value*/
+	context->bw.dce.dispclk_khz = 681000;
+	context->bw.dce.yclk_khz = 250000 * MEMORY_TYPE_MULTIPLIER;
 
 	return true;
 }
@@ -830,11 +817,11 @@ static bool construct(
 		}
 	}
 
-	pool->base.dccg = dce_dccg_create(ctx,
+	pool->base.display_clock = dce_disp_clk_create(ctx,
 			&disp_clk_regs,
 			&disp_clk_shift,
 			&disp_clk_mask);
-	if (pool->base.dccg == NULL) {
+	if (pool->base.display_clock == NULL) {
 		dm_error("DC: failed to create display clock!\n");
 		BREAK_TO_DEBUGGER();
 		goto res_create_fail;
@@ -864,7 +851,7 @@ static bool construct(
 	 * max_clock_state
 	 */
 	if (dm_pp_get_static_clocks(ctx, &static_clk_info))
-		pool->base.dccg->max_clks_state =
+		pool->base.display_clock->max_clks_state =
 					static_clk_info.max_clocks_state;
 	{
 		struct irq_service_init_data init_data;

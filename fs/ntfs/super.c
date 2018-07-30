@@ -456,7 +456,6 @@ static inline int ntfs_clear_volume_flags(ntfs_volume *vol, VOLUME_FLAGS flags)
  * @sb:		superblock of mounted ntfs filesystem
  * @flags:	remount flags
  * @opt:	remount options string
- * @data_size:	size of the options string
  *
  * Change the mount options of an already mounted ntfs filesystem.
  *
@@ -464,8 +463,7 @@ static inline int ntfs_clear_volume_flags(ntfs_volume *vol, VOLUME_FLAGS flags)
  * ntfs_remount() returns successfully (i.e. returns 0).  Otherwise,
  * @sb->s_flags are not changed.
  */
-static int ntfs_remount(struct super_block *sb, int *flags,
-			char *opt, size_t data_size)
+static int ntfs_remount(struct super_block *sb, int *flags, char *opt)
 {
 	ntfs_volume *vol = NTFS_SB(sb);
 
@@ -2696,7 +2694,6 @@ static const struct super_operations ntfs_sops = {
  * ntfs_fill_super - mount an ntfs filesystem
  * @sb:		super block of ntfs filesystem to mount
  * @opt:	string containing the mount options
- * @data_size:	size of the mount options string
  * @silent:	silence error output
  *
  * ntfs_fill_super() is called by the VFS to mount the device described by @sb
@@ -2711,8 +2708,7 @@ static const struct super_operations ntfs_sops = {
  *
  * NOTE: @sb->s_flags contains the mount options flags.
  */
-static int ntfs_fill_super(struct super_block *sb, void *opt, size_t data_size,
-			   const int silent)
+static int ntfs_fill_super(struct super_block *sb, void *opt, const int silent)
 {
 	ntfs_volume *vol;
 	struct buffer_head *bh;
@@ -3064,10 +3060,9 @@ struct kmem_cache *ntfs_index_ctx_cache;
 DEFINE_MUTEX(ntfs_lock);
 
 static struct dentry *ntfs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  ntfs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, ntfs_fill_super);
 }
 
 static struct file_system_type ntfs_fs_type = {

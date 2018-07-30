@@ -222,11 +222,25 @@ static int rxe_dealloc_pd(struct ib_pd *ibpd)
 	return 0;
 }
 
-static void rxe_init_av(struct rxe_dev *rxe, struct rdma_ah_attr *attr,
-			struct rxe_av *av)
+static int rxe_init_av(struct rxe_dev *rxe, struct rdma_ah_attr *attr,
+		       struct rxe_av *av)
 {
+	int err;
+	union ib_gid sgid;
+	struct ib_gid_attr sgid_attr;
+
+	err = ib_get_cached_gid(&rxe->ib_dev, rdma_ah_get_port_num(attr),
+				rdma_ah_read_grh(attr)->sgid_index, &sgid,
+				&sgid_attr);
+	if (err) {
+		pr_err("Failed to query sgid. err = %d\n", err);
+		return err;
+	}
+
 	rxe_av_from_attr(rdma_ah_get_port_num(attr), av, attr);
-	rxe_av_fill_ip_info(av, attr);
+	rxe_av_fill_ip_info(av, attr, &sgid_attr, &sgid);
+	dev_put(sgid_attr.ndev);
+	return 0;
 }
 
 static struct ib_ah *rxe_create_ah(struct ib_pd *ibpd,
@@ -241,17 +255,28 @@ static struct ib_ah *rxe_create_ah(struct ib_pd *ibpd,
 
 	err = rxe_av_chk_attr(rxe, attr);
 	if (err)
-		return ERR_PTR(err);
+		goto err1;
 
 	ah = rxe_alloc(&rxe->ah_pool);
-	if (!ah)
-		return ERR_PTR(-ENOMEM);
+	if (!ah) {
+		err = -ENOMEM;
+		goto err1;
+	}
 
 	rxe_add_ref(pd);
 	ah->pd = pd;
 
-	rxe_init_av(rxe, attr, &ah->av);
+	err = rxe_init_av(rxe, attr, &ah->av);
+	if (err)
+		goto err2;
+
 	return &ah->ibah;
+
+err2:
+	rxe_drop_ref(pd);
+	rxe_drop_ref(ah);
+err1:
+	return ERR_PTR(err);
 }
 
 static int rxe_modify_ah(struct ib_ah *ibah, struct rdma_ah_attr *attr)
@@ -264,7 +289,10 @@ static int rxe_modify_ah(struct ib_ah *ibah, struct rdma_ah_attr *attr)
 	if (err)
 		return err;
 
-	rxe_init_av(rxe, attr, &ah->av);
+	err = rxe_init_av(rxe, attr, &ah->av);
+	if (err)
+		return err;
+
 	return 0;
 }
 

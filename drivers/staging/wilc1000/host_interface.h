@@ -273,6 +273,10 @@ struct host_if_drv {
 	struct cfg_param_attr cfg_values;
 	/*lock to protect concurrent setting of cfg params*/
 	struct mutex cfg_values_lock;
+	struct completion comp_test_key_block;
+	struct completion comp_test_disconn_block;
+	struct completion comp_get_rssi;
+	struct completion comp_inactive_time;
 
 	struct timer_list scan_timer;
 	struct wilc_vif *scan_timer_vif;
@@ -355,8 +359,7 @@ int wilc_frame_register(struct wilc_vif *vif, u16 frame_type, bool reg);
 int wilc_set_wfi_drv_handler(struct wilc_vif *vif, int index, u8 mode,
 			     u8 ifc_id);
 int wilc_set_operation_mode(struct wilc_vif *vif, u32 mode);
-int wilc_get_statistics(struct wilc_vif *vif, struct rf_info *stats,
-			bool is_sync);
+int wilc_get_statistics(struct wilc_vif *vif, struct rf_info *stats);
 void wilc_resolve_disconnect_aberration(struct wilc_vif *vif);
 int wilc_get_vif_idx(struct wilc_vif *vif);
 int wilc_set_tx_power(struct wilc_vif *vif, u8 tx_power);

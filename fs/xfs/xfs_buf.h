@@ -12,6 +12,7 @@
 #include <linux/mm.h>
 #include <linux/fs.h>
 #include <linux/dax.h>
+#include <linux/buffer_head.h>
 #include <linux/uio.h>
 #include <linux/list_lru.h>
 
@@ -297,14 +298,8 @@ extern void __xfs_buf_ioerror(struct xfs_buf *bp, int error,
 		xfs_failaddr_t failaddr);
 #define xfs_buf_ioerror(bp, err) __xfs_buf_ioerror((bp), (err), __this_address)
 extern void xfs_buf_ioerror_alert(struct xfs_buf *, const char *func);
-
-extern int __xfs_buf_submit(struct xfs_buf *bp, bool);
-static inline int xfs_buf_submit(struct xfs_buf *bp)
-{
-	bool wait = bp->b_flags & XBF_ASYNC ? false : true;
-	return __xfs_buf_submit(bp, wait);
-}
-
+extern void xfs_buf_submit(struct xfs_buf *bp);
+extern int xfs_buf_submit_wait(struct xfs_buf *bp);
 extern void xfs_buf_iomove(xfs_buf_t *, size_t, size_t, void *,
 				xfs_buf_rw_t);
 #define xfs_buf_zero(bp, off, len) \

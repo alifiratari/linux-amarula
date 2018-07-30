@@ -622,6 +622,7 @@ static struct sh_eth_cpu_data r7s72100_data = {
 	.tpauser	= 1,
 	.hw_swap	= 1,
 	.rpadir		= 1,
+	.rpadir_value   = 2 << 16,
 	.no_trimd	= 1,
 	.no_ade		= 1,
 	.xdfar_rw	= 1,
@@ -671,6 +672,7 @@ static struct sh_eth_cpu_data r8a7740_data = {
 	.bculr		= 1,
 	.hw_swap	= 1,
 	.rpadir		= 1,
+	.rpadir_value   = 2 << 16,
 	.no_trimd	= 1,
 	.no_ade		= 1,
 	.xdfar_rw	= 1,
@@ -796,6 +798,7 @@ static struct sh_eth_cpu_data r8a77980_data = {
 	.hw_swap	= 1,
 	.nbst		= 1,
 	.rpadir		= 1,
+	.rpadir_value   = 2 << 16,
 	.no_trimd	= 1,
 	.no_ade		= 1,
 	.xdfar_rw	= 1,
@@ -848,6 +851,7 @@ static struct sh_eth_cpu_data sh7724_data = {
 	.tpauser	= 1,
 	.hw_swap	= 1,
 	.rpadir		= 1,
+	.rpadir_value	= 0x00020000, /* NET_IP_ALIGN assumed to be 2 */
 };
 
 static void sh_eth_set_rate_sh7757(struct net_device *ndev)
@@ -894,6 +898,7 @@ static struct sh_eth_cpu_data sh7757_data = {
 	.hw_swap	= 1,
 	.no_ade		= 1,
 	.rpadir		= 1,
+	.rpadir_value   = 2 << 16,
 	.rtrate		= 1,
 	.dual_port	= 1,
 };
@@ -973,6 +978,7 @@ static struct sh_eth_cpu_data sh7757_data_giga = {
 	.bculr		= 1,
 	.hw_swap	= 1,
 	.rpadir		= 1,
+	.rpadir_value   = 2 << 16,
 	.no_trimd	= 1,
 	.no_ade		= 1,
 	.xdfar_rw	= 1,
@@ -1461,7 +1467,7 @@ static int sh_eth_dev_init(struct net_device *ndev)
 	/* Descriptor format */
 	sh_eth_ring_format(ndev);
 	if (mdp->cd->rpadir)
-		sh_eth_write(ndev, NET_IP_ALIGN << 16, RPADIR);
+		sh_eth_write(ndev, mdp->cd->rpadir_value, RPADIR);
 
 	/* all sh_eth int mask */
 	sh_eth_write(ndev, 0, EESIPR);
@@ -1521,9 +1527,9 @@ static int sh_eth_dev_init(struct net_device *ndev)
 
 	/* mask reset */
 	if (mdp->cd->apr)
-		sh_eth_write(ndev, 1, APR);
+		sh_eth_write(ndev, APR_AP, APR);
 	if (mdp->cd->mpr)
-		sh_eth_write(ndev, 1, MPR);
+		sh_eth_write(ndev, MPR_MP, MPR);
 	if (mdp->cd->tpauser)
 		sh_eth_write(ndev, TPAUSER_UNLIMITED, TPAUSER);
 
@@ -1921,14 +1927,7 @@ static void sh_eth_adjust_link(struct net_device *ndev)
 {
 	struct sh_eth_private *mdp = netdev_priv(ndev);
 	struct phy_device *phydev = ndev->phydev;
-	unsigned long flags;
 	int new_state = 0;
-
-	spin_lock_irqsave(&mdp->lock, flags);
-
-	/* Disable TX and RX right over here, if E-MAC change is ignored */
-	if (mdp->cd->no_psr || mdp->no_ether_link)
-		sh_eth_rcv_snd_disable(ndev);
 
 	if (phydev->link) {
 		if (phydev->duplex != mdp->duplex) {
@@ -1948,20 +1947,17 @@ static void sh_eth_adjust_link(struct net_device *ndev)
 			sh_eth_modify(ndev, ECMR, ECMR_TXF, 0);
 			new_state = 1;
 			mdp->link = phydev->link;
+			if (mdp->cd->no_psr || mdp->no_ether_link)
+				sh_eth_rcv_snd_enable(ndev);
 		}
 	} else if (mdp->link) {
 		new_state = 1;
 		mdp->link = 0;
 		mdp->speed = 0;
 		mdp->duplex = -1;
+		if (mdp->cd->no_psr || mdp->no_ether_link)
+			sh_eth_rcv_snd_disable(ndev);
 	}
-
-	/* Enable TX and RX right over here, if E-MAC change is ignored */
-	if ((mdp->cd->no_psr || mdp->no_ether_link) && phydev->link)
-		sh_eth_rcv_snd_enable(ndev);
-
-	mmiowb();
-	spin_unlock_irqrestore(&mdp->lock, flags);
 
 	if (new_state && netif_msg_link(mdp))
 		phy_print_status(phydev);
@@ -2032,6 +2028,60 @@ static int sh_eth_phy_start(struct net_device *ndev)
 	phy_start(ndev->phydev);
 
 	return 0;
+}
+
+static int sh_eth_get_link_ksettings(struct net_device *ndev,
+				     struct ethtool_link_ksettings *cmd)
+{
+	struct sh_eth_private *mdp = netdev_priv(ndev);
+	unsigned long flags;
+
+	if (!ndev->phydev)
+		return -ENODEV;
+
+	spin_lock_irqsave(&mdp->lock, flags);
+	phy_ethtool_ksettings_get(ndev->phydev, cmd);
+	spin_unlock_irqrestore(&mdp->lock, flags);
+
+	return 0;
+}
+
+static int sh_eth_set_link_ksettings(struct net_device *ndev,
+				     const struct ethtool_link_ksettings *cmd)
+{
+	struct sh_eth_private *mdp = netdev_priv(ndev);
+	unsigned long flags;
+	int ret;
+
+	if (!ndev->phydev)
+		return -ENODEV;
+
+	spin_lock_irqsave(&mdp->lock, flags);
+
+	/* disable tx and rx */
+	sh_eth_rcv_snd_disable(ndev);
+
+	ret = phy_ethtool_ksettings_set(ndev->phydev, cmd);
+	if (ret)
+		goto error_exit;
+
+	if (cmd->base.duplex == DUPLEX_FULL)
+		mdp->duplex = 1;
+	else
+		mdp->duplex = 0;
+
+	if (mdp->cd->set_duplex)
+		mdp->cd->set_duplex(ndev);
+
+error_exit:
+	mdelay(1);
+
+	/* enable tx and rx */
+	sh_eth_rcv_snd_enable(ndev);
+
+	spin_unlock_irqrestore(&mdp->lock, flags);
+
+	return ret;
 }
 
 /* If it is ever necessary to increase SH_ETH_REG_DUMP_MAX_REGS, the
@@ -2213,6 +2263,22 @@ static void sh_eth_get_regs(struct net_device *ndev, struct ethtool_regs *regs,
 	pm_runtime_put_sync(&mdp->pdev->dev);
 }
 
+static int sh_eth_nway_reset(struct net_device *ndev)
+{
+	struct sh_eth_private *mdp = netdev_priv(ndev);
+	unsigned long flags;
+	int ret;
+
+	if (!ndev->phydev)
+		return -ENODEV;
+
+	spin_lock_irqsave(&mdp->lock, flags);
+	ret = phy_start_aneg(ndev->phydev);
+	spin_unlock_irqrestore(&mdp->lock, flags);
+
+	return ret;
+}
+
 static u32 sh_eth_get_msglevel(struct net_device *ndev)
 {
 	struct sh_eth_private *mdp = netdev_priv(ndev);
@@ -2363,7 +2429,7 @@ static int sh_eth_set_wol(struct net_device *ndev, struct ethtool_wolinfo *wol)
 static const struct ethtool_ops sh_eth_ethtool_ops = {
 	.get_regs_len	= sh_eth_get_regs_len,
 	.get_regs	= sh_eth_get_regs,
-	.nway_reset	= phy_ethtool_nway_reset,
+	.nway_reset	= sh_eth_nway_reset,
 	.get_msglevel	= sh_eth_get_msglevel,
 	.set_msglevel	= sh_eth_set_msglevel,
 	.get_link	= ethtool_op_get_link,
@@ -2372,8 +2438,8 @@ static const struct ethtool_ops sh_eth_ethtool_ops = {
 	.get_sset_count     = sh_eth_get_sset_count,
 	.get_ringparam	= sh_eth_get_ringparam,
 	.set_ringparam	= sh_eth_set_ringparam,
-	.get_link_ksettings = phy_ethtool_get_link_ksettings,
-	.set_link_ksettings = phy_ethtool_set_link_ksettings,
+	.get_link_ksettings = sh_eth_get_link_ksettings,
+	.set_link_ksettings = sh_eth_set_link_ksettings,
 	.get_wol	= sh_eth_get_wol,
 	.set_wol	= sh_eth_set_wol,
 };

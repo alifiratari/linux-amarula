@@ -441,7 +441,6 @@ xfs_bui_recover(
 			XFS_EXTENTADD_SPACE_RES(mp, XFS_DATA_FORK), 0, 0, &tp);
 	if (error)
 		return error;
-	tp->t_dfops = dfops;
 	budp = xfs_trans_get_bud(tp, buip);
 
 	/* Grab the inode. */
@@ -488,12 +487,6 @@ xfs_bui_recover(
 	}
 
 	set_bit(XFS_BUI_RECOVERED, &buip->bui_flags);
-	/*
-	 * Recovery finishes all deferred ops once intent processing is
-	 * complete. Reset the trans reference because commit expects a finished
-	 * dfops or none at all.
-	 */
-	tp->t_dfops = NULL;
 	error = xfs_trans_commit(tp);
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 	IRELE(ip);
@@ -501,7 +494,6 @@ xfs_bui_recover(
 	return error;
 
 err_inode:
-	tp->t_dfops = NULL;
 	xfs_trans_cancel(tp);
 	if (ip) {
 		xfs_iunlock(ip, XFS_ILOCK_EXCL);

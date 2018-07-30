@@ -390,9 +390,7 @@ static int q6asm_dai_close(struct snd_pcm_substream *substream)
 	struct q6asm_dai_rtd *prtd = runtime->private_data;
 
 	if (prtd->audio_client) {
-		if (prtd->state)
-			q6asm_cmd(prtd->audio_client, CMD_CLOSE);
-
+		q6asm_cmd(prtd->audio_client, CMD_CLOSE);
 		q6asm_unmap_memory_regions(substream->stream,
 					   prtd->audio_client);
 		q6asm_audio_client_free(prtd->audio_client);
@@ -613,16 +611,9 @@ static int q6asm_dai_dev_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id q6asm_dai_device_id[] = {
-	{ .compatible = "qcom,q6asm-dais" },
-	{},
-};
-MODULE_DEVICE_TABLE(of, q6asm_dai_device_id);
-
 static struct platform_driver q6asm_dai_platform_driver = {
 	.driver = {
 		.name = "q6asm-dai",
-		.of_match_table = of_match_ptr(q6asm_dai_device_id),
 	},
 	.probe = q6asm_dai_probe,
 	.remove = q6asm_dai_dev_remove,

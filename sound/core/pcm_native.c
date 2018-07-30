@@ -1337,12 +1337,13 @@ int snd_pcm_drain_done(struct snd_pcm_substream *substream)
 int snd_pcm_stop_xrun(struct snd_pcm_substream *substream)
 {
 	unsigned long flags;
+	int ret = 0;
 
 	snd_pcm_stream_lock_irqsave(substream, flags);
-	if (substream->runtime && snd_pcm_running(substream))
-		__snd_pcm_xrun(substream);
+	if (snd_pcm_running(substream))
+		ret = snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
 	snd_pcm_stream_unlock_irqrestore(substream, flags);
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(snd_pcm_stop_xrun);
 
@@ -1590,8 +1591,7 @@ static int snd_pcm_xrun(struct snd_pcm_substream *substream)
 		result = 0;	/* already there */
 		break;
 	case SNDRV_PCM_STATE_RUNNING:
-		__snd_pcm_xrun(substream);
-		result = 0;
+		result = snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
 		break;
 	default:
 		result = -EBADFD;

@@ -493,7 +493,7 @@ struct ocelot {
 	u8 num_cpu_ports;
 	struct ocelot_port **ports;
 
-	u32 *lags;
+	u16 lags[16];
 
 	/* Keep track of the vlan port masks */
 	u32 vlan_mask[VLAN_N_VID];

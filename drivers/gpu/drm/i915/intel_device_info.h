@@ -186,7 +186,6 @@ struct intel_device_info {
 
 struct intel_driver_caps {
 	unsigned int scheduler;
-	bool has_logical_contexts:1;
 };
 
 static inline unsigned int sseu_subslice_total(const struct sseu_dev_info *sseu)

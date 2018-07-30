@@ -17,14 +17,6 @@ static inline bool nf_tproxy_sk_is_transparent(struct sock *sk)
 	return false;
 }
 
-/* assign a socket to the skb -- consumes sk */
-static inline void nf_tproxy_assign_sock(struct sk_buff *skb, struct sock *sk)
-{
-	skb_orphan(skb);
-	skb->sk = sk;
-	skb->destructor = sock_edemux;
-}
-
 __be32 nf_tproxy_laddr4(struct sk_buff *skb, __be32 user_laddr, __be32 daddr);
 
 /**
@@ -72,7 +64,7 @@ nf_tproxy_handle_time_wait4(struct net *net, struct sk_buff *skb,
  * belonging to established connections going through that one.
  */
 struct sock *
-nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb,
+nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb, void *hp,
 		      const u8 protocol,
 		      const __be32 saddr, const __be32 daddr,
 		      const __be16 sport, const __be16 dport,
@@ -111,7 +103,7 @@ nf_tproxy_handle_time_wait6(struct sk_buff *skb, int tproto, int thoff,
 			    struct sock *sk);
 
 struct sock *
-nf_tproxy_get_sock_v6(struct net *net, struct sk_buff *skb, int thoff,
+nf_tproxy_get_sock_v6(struct net *net, struct sk_buff *skb, int thoff, void *hp,
 		      const u8 protocol,
 		      const struct in6_addr *saddr, const struct in6_addr *daddr,
 		      const __be16 sport, const __be16 dport,

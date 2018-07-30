@@ -116,12 +116,11 @@ out:
  * @buf: buffer to receive
  * @length: buffer length
  * @mode: io mode
- * @timeout: recv timeout, 0 for infinite timeout
  *
  * Return: read size in bytes of < 0 on error
  */
 ssize_t __mei_cl_recv(struct mei_cl *cl, u8 *buf, size_t length,
-		      unsigned int mode, unsigned long timeout)
+		      unsigned int mode)
 {
 	struct mei_device *bus;
 	struct mei_cl_cb *cb;
@@ -159,28 +158,13 @@ ssize_t __mei_cl_recv(struct mei_cl *cl, u8 *buf, size_t length,
 
 		mutex_unlock(&bus->device_lock);
 
-		if (timeout) {
-			rets = wait_event_interruptible_timeout
-					(cl->rx_wait,
-					(!list_empty(&cl->rd_completed)) ||
-					(!mei_cl_is_connected(cl)),
-					msecs_to_jiffies(timeout));
-			if (rets == 0)
-				return -ETIME;
-			if (rets < 0) {
-				if (signal_pending(current))
-					return -EINTR;
-				return -ERESTARTSYS;
-			}
-		} else {
-			if (wait_event_interruptible
-					(cl->rx_wait,
-					(!list_empty(&cl->rd_completed)) ||
-					(!mei_cl_is_connected(cl)))) {
-				if (signal_pending(current))
-					return -EINTR;
-				return -ERESTARTSYS;
-			}
+		if (wait_event_interruptible(cl->rx_wait,
+				(!list_empty(&cl->rd_completed)) ||
+				(!mei_cl_is_connected(cl)))) {
+
+			if (signal_pending(current))
+				return -EINTR;
+			return -ERESTARTSYS;
 		}
 
 		mutex_lock(&bus->device_lock);
@@ -247,7 +231,7 @@ ssize_t mei_cldev_recv_nonblock(struct mei_cl_device *cldev, u8 *buf,
 {
 	struct mei_cl *cl = cldev->cl;
 
-	return __mei_cl_recv(cl, buf, length, MEI_CL_IO_RX_NONBLOCK, 0);
+	return __mei_cl_recv(cl, buf, length, MEI_CL_IO_RX_NONBLOCK);
 }
 EXPORT_SYMBOL_GPL(mei_cldev_recv_nonblock);
 
@@ -264,7 +248,7 @@ ssize_t mei_cldev_recv(struct mei_cl_device *cldev, u8 *buf, size_t length)
 {
 	struct mei_cl *cl = cldev->cl;
 
-	return __mei_cl_recv(cl, buf, length, 0, 0);
+	return __mei_cl_recv(cl, buf, length, 0);
 }
 EXPORT_SYMBOL_GPL(mei_cldev_recv);
 

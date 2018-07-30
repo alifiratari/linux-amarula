@@ -270,11 +270,6 @@ struct i915_vma_ops {
 	void (*clear_pages)(struct i915_vma *vma);
 };
 
-struct pagestash {
-	spinlock_t lock;
-	struct pagevec pvec;
-};
-
 struct i915_address_space {
 	struct drm_mm mm;
 	struct drm_i915_private *i915;
@@ -288,12 +283,11 @@ struct i915_address_space {
 	 * assign blame.
 	 */
 	struct drm_i915_file_private *file;
+	struct list_head global_link;
 	u64 total;		/* size addr space maps (ex. 2GB for ggtt) */
 	u64 reserved;		/* size addr space reserved */
 
 	bool closed;
-
-	struct mutex mutex; /* protects vma and our lists */
 
 	struct i915_page_dma scratch_page;
 	struct i915_page_table *scratch_pt;
@@ -330,13 +324,8 @@ struct i915_address_space {
 	 */
 	struct list_head unbound_list;
 
-	struct pagestash free_pages;
-
-	/* Some systems require uncached updates of the page directories */
-	bool pt_kmap_wc:1;
-
-	/* Some systems support read-only mappings for GGTT and/or PPGTT */
-	bool has_read_only:1;
+	struct pagevec free_pages;
+	bool pt_kmap_wc;
 
 	/* FIXME: Need a more generic return type */
 	gen6_pte_t (*pte_encode)(dma_addr_t addr,
@@ -626,7 +615,8 @@ void i915_ggtt_cleanup_hw(struct drm_i915_private *dev_priv);
 int i915_ppgtt_init_hw(struct drm_i915_private *dev_priv);
 void i915_ppgtt_release(struct kref *kref);
 struct i915_hw_ppgtt *i915_ppgtt_create(struct drm_i915_private *dev_priv,
-					struct drm_i915_file_private *fpriv);
+					struct drm_i915_file_private *fpriv,
+					const char *name);
 void i915_ppgtt_close(struct i915_address_space *vm);
 static inline void i915_ppgtt_get(struct i915_hw_ppgtt *ppgtt)
 {

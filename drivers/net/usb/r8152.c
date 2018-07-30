@@ -1252,7 +1252,6 @@ static void read_bulk_callback(struct urb *urb)
 	int status = urb->status;
 	struct rx_agg *agg;
 	struct r8152 *tp;
-	unsigned long flags;
 
 	agg = urb->context;
 	if (!agg)
@@ -1282,9 +1281,9 @@ static void read_bulk_callback(struct urb *urb)
 		if (urb->actual_length < ETH_ZLEN)
 			break;
 
-		spin_lock_irqsave(&tp->rx_lock, flags);
+		spin_lock(&tp->rx_lock);
 		list_add_tail(&agg->list, &tp->rx_done);
-		spin_unlock_irqrestore(&tp->rx_lock, flags);
+		spin_unlock(&tp->rx_lock);
 		napi_schedule(&tp->napi);
 		return;
 	case -ESHUTDOWN:
@@ -1312,7 +1311,6 @@ static void write_bulk_callback(struct urb *urb)
 	struct net_device *netdev;
 	struct tx_agg *agg;
 	struct r8152 *tp;
-	unsigned long flags;
 	int status = urb->status;
 
 	agg = urb->context;
@@ -1334,9 +1332,9 @@ static void write_bulk_callback(struct urb *urb)
 		stats->tx_bytes += agg->skb_len;
 	}
 
-	spin_lock_irqsave(&tp->tx_lock, flags);
+	spin_lock(&tp->tx_lock);
 	list_add_tail(&agg->list, &tp->tx_free);
-	spin_unlock_irqrestore(&tp->tx_lock, flags);
+	spin_unlock(&tp->tx_lock);
 
 	usb_autopm_put_interface_async(tp->intf);
 
@@ -1376,7 +1374,6 @@ static void intr_callback(struct urb *urb)
 	case -ECONNRESET:	/* unlink */
 	case -ESHUTDOWN:
 		netif_device_detach(tp->netdev);
-		/* fall through */
 	case -ENOENT:
 	case -EPROTO:
 		netif_info(tp, intr, tp->netdev,
@@ -2742,7 +2739,6 @@ static void r8153b_ups_en(struct r8152 *tp, bool enable)
 			r8152_mdio_write(tp, MII_BMCR, data);
 
 			data = r8153_phy_status(tp, PHY_STAT_LAN_ON);
-			/* fall through */
 
 		default:
 			if (data != PHY_STAT_LAN_ON)
@@ -3966,8 +3962,7 @@ static int rtl8152_close(struct net_device *netdev)
 #ifdef CONFIG_PM_SLEEP
 	unregister_pm_notifier(&tp->pm_notifier);
 #endif
-	if (!test_bit(RTL8152_UNPLUG, &tp->flags))
-		napi_disable(&tp->napi);
+	napi_disable(&tp->napi);
 	clear_bit(WORK_ENABLE, &tp->flags);
 	usb_kill_urb(tp->intr_urb);
 	cancel_delayed_work_sync(&tp->schedule);

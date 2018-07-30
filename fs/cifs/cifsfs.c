@@ -139,9 +139,6 @@ cifs_read_super(struct super_block *sb)
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_POSIXACL)
 		sb->s_flags |= SB_POSIXACL;
 
-	if (tcon->snapshot_time)
-		sb->s_flags |= SB_RDONLY;
-
 	if (tcon->ses->capabilities & tcon->ses->server->vals->cap_large_files)
 		sb->s_maxbytes = MAX_LFS_FILESIZE;
 	else
@@ -212,16 +209,14 @@ cifs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 	xid = get_xid();
 
-	if (le32_to_cpu(tcon->fsAttrInfo.MaxPathNameComponentLength) > 0)
-		buf->f_namelen =
-		       le32_to_cpu(tcon->fsAttrInfo.MaxPathNameComponentLength);
-	else
-		buf->f_namelen = PATH_MAX;
-
-	buf->f_fsid.val[0] = tcon->vol_serial_number;
-	/* are using part of create time for more randomness, see man statfs */
-	buf->f_fsid.val[1] =  (int)le64_to_cpu(tcon->vol_create_time);
-
+	/*
+	 * PATH_MAX may be too long - it would presumably be total path,
+	 * but note that some servers (includinng Samba 3) have a shorter
+	 * maximum path.
+	 *
+	 * Instead could get the real value via SMB_QUERY_FS_ATTRIBUTE_INFO.
+	 */
+	buf->f_namelen = PATH_MAX;
 	buf->f_files = 0;	/* undefined */
 	buf->f_ffree = 0;	/* unlimited */
 
@@ -486,12 +481,20 @@ cifs_show_options(struct seq_file *s, struct dentry *root)
 		seq_puts(s, ",persistenthandles");
 	else if (tcon->use_resilient)
 		seq_puts(s, ",resilienthandles");
+
+#ifdef CONFIG_CIFS_SMB311
 	if (tcon->posix_extensions)
 		seq_puts(s, ",posix");
 	else if (tcon->unix_ext)
 		seq_puts(s, ",unix");
 	else
 		seq_puts(s, ",nounix");
+#else
+	if (tcon->unix_ext)
+		seq_puts(s, ",unix");
+	else
+		seq_puts(s, ",nounix");
+#endif /* SMB311 */
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_POSIX_PATHS)
 		seq_puts(s, ",posixpaths");
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SET_UID)
@@ -543,8 +546,6 @@ cifs_show_options(struct seq_file *s, struct dentry *root)
 	seq_printf(s, ",wsize=%u", cifs_sb->wsize);
 	seq_printf(s, ",echo_interval=%lu",
 			tcon->ses->server->echo_interval / HZ);
-	if (tcon->snapshot_time)
-		seq_printf(s, ",snapshot=%llu", tcon->snapshot_time);
 	/* convert actimeo and display it in seconds */
 	seq_printf(s, ",actimeo=%lu", cifs_sb->actimeo / HZ);
 
@@ -595,8 +596,7 @@ static int cifs_show_stats(struct seq_file *s, struct dentry *root)
 }
 #endif
 
-static int cifs_remount(struct super_block *sb, int *flags,
-			char *data, size_t data_size)
+static int cifs_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
 	*flags |= SB_NODIRATIME;
@@ -699,8 +699,7 @@ static int cifs_set_super(struct super_block *sb, void *data)
 
 static struct dentry *
 cifs_smb3_do_mount(struct file_system_type *fs_type,
-		   int flags, const char *dev_name, void *data, size_t data_size,
-		   bool is_smb3)
+	      int flags, const char *dev_name, void *data, bool is_smb3)
 {
 	int rc;
 	struct super_block *sb;
@@ -721,7 +720,7 @@ cifs_smb3_do_mount(struct file_system_type *fs_type,
 		goto out_nls;
 	}
 
-	cifs_sb->mountdata = kstrndup(data, data_size, GFP_KERNEL);
+	cifs_sb->mountdata = kstrndup(data, PAGE_SIZE, GFP_KERNEL);
 	if (cifs_sb->mountdata == NULL) {
 		root = ERR_PTR(-ENOMEM);
 		goto out_free;
@@ -793,18 +792,16 @@ out_nls:
 
 static struct dentry *
 smb3_do_mount(struct file_system_type *fs_type,
-	      int flags, const char *dev_name, void *data, size_t data_size)
+	      int flags, const char *dev_name, void *data)
 {
-	return cifs_smb3_do_mount(fs_type, flags, dev_name, data, data_size,
-				  true);
+	return cifs_smb3_do_mount(fs_type, flags, dev_name, data, true);
 }
 
 static struct dentry *
 cifs_do_mount(struct file_system_type *fs_type,
-	      int flags, const char *dev_name, void *data, size_t data_size)
+	      int flags, const char *dev_name, void *data)
 {
-	return cifs_smb3_do_mount(fs_type, flags, dev_name, data, data_size,
-				  false);
+	return cifs_smb3_do_mount(fs_type, flags, dev_name, data, false);
 }
 
 static ssize_t

@@ -349,7 +349,7 @@ EXPORT_SYMBOL(inc_nlink);
 
 static void __address_space_init_once(struct address_space *mapping)
 {
-	xa_init_flags(&mapping->i_pages, XA_FLAGS_LOCK_IRQ);
+	INIT_RADIX_TREE(&mapping->i_pages, GFP_ATOMIC | __GFP_ACCOUNT);
 	init_rwsem(&mapping->i_mmap_rwsem);
 	INIT_LIST_HEAD(&mapping->private_list);
 	spin_lock_init(&mapping->private_lock);
@@ -1555,16 +1555,49 @@ sector_t bmap(struct inode *inode, sector_t block)
 EXPORT_SYMBOL(bmap);
 
 /*
+ * Update times in overlayed inode from underlying real inode
+ */
+static void update_ovl_inode_times(struct dentry *dentry, struct inode *inode,
+			       bool rcu)
+{
+	struct dentry *upperdentry;
+
+	/*
+	 * Nothing to do if in rcu or if non-overlayfs
+	 */
+	if (rcu || likely(!(dentry->d_flags & DCACHE_OP_REAL)))
+		return;
+
+	upperdentry = d_real(dentry, NULL, 0, D_REAL_UPPER);
+
+	/*
+	 * If file is on lower then we can't update atime, so no worries about
+	 * stale mtime/ctime.
+	 */
+	if (upperdentry) {
+		struct inode *realinode = d_inode(upperdentry);
+
+		if ((!timespec64_equal(&inode->i_mtime, &realinode->i_mtime) ||
+		     !timespec64_equal(&inode->i_ctime, &realinode->i_ctime))) {
+			inode->i_mtime = realinode->i_mtime;
+			inode->i_ctime = realinode->i_ctime;
+		}
+	}
+}
+
+/*
  * With relative atime, only update atime if the previous atime is
  * earlier than either the ctime or mtime or if at least a day has
  * passed since the last atime update.
  */
-static int relatime_need_update(struct vfsmount *mnt, struct inode *inode,
-			     struct timespec now)
+static int relatime_need_update(const struct path *path, struct inode *inode,
+				struct timespec now, bool rcu)
 {
 
-	if (!(mnt->mnt_flags & MNT_RELATIME))
+	if (!(path->mnt->mnt_flags & MNT_RELATIME))
 		return 1;
+
+	update_ovl_inode_times(path->dentry, inode, rcu);
 	/*
 	 * Is mtime younger than atime? If yes, update atime:
 	 */
@@ -1635,7 +1668,8 @@ static int update_time(struct inode *inode, struct timespec64 *time, int flags)
  *	This function automatically handles read only file systems and media,
  *	as well as the "noatime" flag and inode specific "noatime" markers.
  */
-bool atime_needs_update(const struct path *path, struct inode *inode)
+bool __atime_needs_update(const struct path *path, struct inode *inode,
+			  bool rcu)
 {
 	struct vfsmount *mnt = path->mnt;
 	struct timespec64 now;
@@ -1661,7 +1695,7 @@ bool atime_needs_update(const struct path *path, struct inode *inode)
 
 	now = current_time(inode);
 
-	if (!relatime_need_update(mnt, inode, timespec64_to_timespec(now)))
+	if (!relatime_need_update(path, inode, timespec64_to_timespec(now), rcu))
 		return false;
 
 	if (timespec64_equal(&inode->i_atime, &now))
@@ -1676,7 +1710,7 @@ void touch_atime(const struct path *path)
 	struct inode *inode = d_inode(path->dentry);
 	struct timespec64 now;
 
-	if (!atime_needs_update(path, inode))
+	if (!__atime_needs_update(path, inode, false))
 		return;
 
 	if (!sb_start_write_trylock(inode->i_sb))
@@ -1965,14 +1999,8 @@ void inode_init_owner(struct inode *inode, const struct inode *dir,
 	inode->i_uid = current_fsuid();
 	if (dir && dir->i_mode & S_ISGID) {
 		inode->i_gid = dir->i_gid;
-
-		/* Directories are special, and always inherit S_ISGID */
 		if (S_ISDIR(mode))
 			mode |= S_ISGID;
-		else if ((mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP) &&
-			 !in_group_p(inode->i_gid) &&
-			 !capable_wrt_inode_uidgid(dir, CAP_FSETID))
-			mode &= ~S_ISGID;
 	} else
 		inode->i_gid = current_fsgid();
 	inode->i_mode = mode;

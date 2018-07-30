@@ -9,7 +9,6 @@
  *
  */
 
-#include <linux/compiler.h>
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -2452,7 +2451,7 @@ lower_callback(struct notifier_block *nb, unsigned long val, void *v)
  * /proc/capi/capidrv:
  * nrecvctlpkt nrecvdatapkt nsendctlpkt nsenddatapkt
  */
-static int __maybe_unused capidrv_proc_show(struct seq_file *m, void *v)
+static int capidrv_proc_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "%lu %lu %lu %lu\n",
 		   global.ap.nrecvctlpkt,

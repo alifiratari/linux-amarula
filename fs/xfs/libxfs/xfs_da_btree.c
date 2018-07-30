@@ -2059,9 +2059,11 @@ xfs_da_grow_inode_int(
 	 * Try mapping it in one filesystem block.
 	 */
 	nmap = 1;
+	ASSERT(args->firstblock != NULL);
 	error = xfs_bmapi_write(tp, dp, *bno, count,
 			xfs_bmapi_aflag(w)|XFS_BMAPI_METADATA|XFS_BMAPI_CONTIG,
-			args->total, &map, &nmap);
+			args->firstblock, args->total, &map, &nmap,
+			args->dfops);
 	if (error)
 		return error;
 
@@ -2083,7 +2085,8 @@ xfs_da_grow_inode_int(
 			c = (int)(*bno + count - b);
 			error = xfs_bmapi_write(tp, dp, b, c,
 					xfs_bmapi_aflag(w)|XFS_BMAPI_METADATA,
-					args->total, &mapp[mapi], &nmap);
+					args->firstblock, args->total,
+					&mapp[mapi], &nmap, args->dfops);
 			if (error)
 				goto out_free_map;
 			if (nmap < 1)
@@ -2372,13 +2375,13 @@ done:
  */
 int
 xfs_da_shrink_inode(
-	struct xfs_da_args	*args,
-	xfs_dablk_t		dead_blkno,
-	struct xfs_buf		*dead_buf)
+	xfs_da_args_t	*args,
+	xfs_dablk_t	dead_blkno,
+	struct xfs_buf	*dead_buf)
 {
-	struct xfs_inode	*dp;
-	int			done, error, w, count;
-	struct xfs_trans	*tp;
+	xfs_inode_t *dp;
+	int done, error, w, count;
+	xfs_trans_t *tp;
 
 	trace_xfs_da_shrink_inode(args);
 
@@ -2392,7 +2395,8 @@ xfs_da_shrink_inode(
 		 * the last block to the place we want to kill.
 		 */
 		error = xfs_bunmapi(tp, dp, dead_blkno, count,
-				    xfs_bmapi_aflag(w), 0, &done);
+				    xfs_bmapi_aflag(w), 0, args->firstblock,
+				    args->dfops, &done);
 		if (error == -ENOSPC) {
 			if (w != XFS_DATA_FORK)
 				break;

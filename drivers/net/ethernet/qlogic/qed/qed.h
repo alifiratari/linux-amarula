@@ -502,7 +502,6 @@ enum BAR_ID {
 struct qed_nvm_image_info {
 	u32 num_images;
 	struct bist_nvm_image_att *image_att;
-	bool valid;
 };
 
 #define DRV_MODULE_VERSION		      \

@@ -1,6 +1,7 @@
-// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
  * Copyright (c) 2017 Andreas Färber
+ *
+ * SPDX-License-Identifier: (GPL-2.0+ OR MIT)
  */
 
 /dts-v1/;
@@ -23,6 +24,12 @@
 		device_type = "memory";
 		reg = <0x0 0x0 0x0 0x80000000>;
 	};
+
+	uart5_clk: uart5-clk {
+		compatible = "fixed-clock";
+		clock-frequency = <921600>;
+		#clock-cells = <0>;
+	};
 };
 
 &timer {
@@ -31,5 +38,5 @@
 
 &uart5 {
 	status = "okay";
-	clocks = <&cmu CLK_UART5>;
+	clocks = <&uart5_clk>;
 };

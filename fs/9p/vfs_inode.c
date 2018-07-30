@@ -859,7 +859,8 @@ struct dentry *v9fs_vfs_lookup(struct inode *dir, struct dentry *dentry,
 
 static int
 v9fs_vfs_atomic_open(struct inode *dir, struct dentry *dentry,
-		     struct file *file, unsigned flags, umode_t mode)
+		     struct file *file, unsigned flags, umode_t mode,
+		     int *opened)
 {
 	int err;
 	u32 perm;
@@ -916,7 +917,7 @@ v9fs_vfs_atomic_open(struct inode *dir, struct dentry *dentry,
 		v9inode->writeback_fid = (void *) inode_fid;
 	}
 	mutex_unlock(&v9inode->v_mutex);
-	err = finish_open(file, dentry, generic_file_open);
+	err = finish_open(file, dentry, generic_file_open, opened);
 	if (err)
 		goto error;
 
@@ -924,7 +925,7 @@ v9fs_vfs_atomic_open(struct inode *dir, struct dentry *dentry,
 	if (v9ses->cache == CACHE_LOOSE || v9ses->cache == CACHE_FSCACHE)
 		v9fs_cache_inode_set_cookie(d_inode(dentry), file);
 
-	file->f_mode |= FMODE_CREATED;
+	*opened |= FILE_CREATED;
 out:
 	dput(res);
 	return err;

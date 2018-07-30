@@ -21,7 +21,6 @@
 #include <linux/fscache.h>
 #include <linux/backing-dev.h>
 #include <linux/uuid.h>
-#include <linux/mm_types.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 #include <net/sock.h>
@@ -35,14 +34,15 @@
 struct pagevec;
 struct afs_call;
 
-struct afs_fs_context {
+struct afs_mount_params {
+	bool			rwpath;		/* T if the parent should be considered R/W */
 	bool			force;		/* T to force cell type */
 	bool			autocell;	/* T if set auto mount operation */
 	bool			dyn_root;	/* T if dynamic root */
-	bool			no_cell;	/* T if the source is "none" (for dynroot) */
 	afs_voltype_t		type;		/* type of volume requested */
-	unsigned int		volnamesz;	/* size of volume name */
+	int			volnamesz;	/* size of volume name */
 	const char		*volname;	/* name of volume to mount */
+	struct net		*net_ns;	/* Network namespace in effect */
 	struct afs_net		*net;		/* the AFS net namespace stuff */
 	struct afs_cell		*cell;		/* cell in which to find volume */
 	struct afs_volume	*volume;	/* volume record */
@@ -1055,7 +1055,7 @@ static inline struct afs_volume *__afs_get_volume(struct afs_volume *volume)
 	return volume;
 }
 
-extern struct afs_volume *afs_create_volume(struct afs_fs_context *);
+extern struct afs_volume *afs_create_volume(struct afs_mount_params *);
 extern void afs_activate_volume(struct afs_volume *);
 extern void afs_deactivate_volume(struct afs_volume *);
 extern void afs_put_volume(struct afs_cell *, struct afs_volume *);
@@ -1076,7 +1076,7 @@ extern int afs_writepages(struct address_space *, struct writeback_control *);
 extern void afs_pages_written_back(struct afs_vnode *, struct afs_call *);
 extern ssize_t afs_file_write(struct kiocb *, struct iov_iter *);
 extern int afs_fsync(struct file *, loff_t, loff_t, int);
-extern vm_fault_t afs_page_mkwrite(struct vm_fault *vmf);
+extern int afs_page_mkwrite(struct vm_fault *);
 extern void afs_prune_wb_keys(struct afs_vnode *);
 extern int afs_launder_page(struct page *);
 

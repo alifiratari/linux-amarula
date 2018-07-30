@@ -48,17 +48,14 @@ static __initdata char chosen_lsm[SECURITY_NAME_MAX + 1] =
 static void __init do_security_initcalls(void)
 {
 	int ret;
-	initcall_t call;
-	initcall_entry_t *ce;
-
-	ce = __security_initcall_start;
+	initcall_t *call;
+	call = __security_initcall_start;
 	trace_initcall_level("security");
-	while (ce < __security_initcall_end) {
-		call = initcall_from_entry(ce);
-		trace_initcall_start(call);
-		ret = call();
-		trace_initcall_finish(call, ret);
-		ce++;
+	while (call < __security_initcall_end) {
+		trace_initcall_start((*call));
+		ret = (*call) ();
+		trace_initcall_finish((*call), ret);
+		call++;
 	}
 }
 
@@ -361,52 +358,6 @@ void security_bprm_committed_creds(struct linux_binprm *bprm)
 	call_void_hook(bprm_committed_creds, bprm);
 }
 
-int security_fs_context_alloc(struct fs_context *fc, struct dentry *reference)
-{
-	return call_int_hook(fs_context_alloc, 0, fc, reference);
-}
-
-int security_fs_context_dup(struct fs_context *fc, struct fs_context *src_fc)
-{
-	return call_int_hook(fs_context_dup, 0, fc, src_fc);
-}
-
-void security_fs_context_free(struct fs_context *fc)
-{
-	call_void_hook(fs_context_free, fc);
-}
-
-int security_fs_context_parse_source(struct fs_context *fc, char *src)
-{
-	return call_int_hook(fs_context_parse_source, 0, fc, src);
-}
-
-int security_fs_context_parse_option(struct fs_context *fc, char *opt, size_t len)
-{
-	return call_int_hook(fs_context_parse_option, 0, fc, opt, len);
-}
-
-int security_fs_context_validate(struct fs_context *fc)
-{
-	return call_int_hook(fs_context_validate, 0, fc);
-}
-
-int security_sb_get_tree(struct fs_context *fc)
-{
-	return call_int_hook(sb_get_tree, 0, fc);
-}
-
-void security_sb_reconfigure(struct fs_context *fc)
-{
-	call_void_hook(sb_reconfigure, fc);
-}
-
-int security_sb_mountpoint(struct fs_context *fc, struct path *mountpoint,
-			   unsigned int mnt_flags)
-{
-	return call_int_hook(sb_mountpoint, 0, fc, mountpoint, mnt_flags);
-}
-
 int security_sb_alloc(struct super_block *sb)
 {
 	return call_int_hook(sb_alloc_security, 0, sb);
@@ -417,15 +368,20 @@ void security_sb_free(struct super_block *sb)
 	call_void_hook(sb_free_security, sb);
 }
 
-int security_sb_copy_data(char *orig, size_t data_size, char *copy)
+int security_sb_copy_data(char *orig, char *copy)
 {
-	return call_int_hook(sb_copy_data, 0, orig, data_size, copy);
+	return call_int_hook(sb_copy_data, 0, orig, copy);
 }
 EXPORT_SYMBOL(security_sb_copy_data);
 
-int security_sb_remount(struct super_block *sb, void *data, size_t data_size)
+int security_sb_remount(struct super_block *sb, void *data)
 {
-	return call_int_hook(sb_remount, 0, sb, data, data_size);
+	return call_int_hook(sb_remount, 0, sb, data);
+}
+
+int security_sb_kern_mount(struct super_block *sb, int flags, void *data)
+{
+	return call_int_hook(sb_kern_mount, 0, sb, flags, data);
 }
 
 int security_sb_show_options(struct seq_file *m, struct super_block *sb)
@@ -439,11 +395,9 @@ int security_sb_statfs(struct dentry *dentry)
 }
 
 int security_sb_mount(const char *dev_name, const struct path *path,
-		      const char *type, unsigned long flags,
-		      void *data, size_t data_size)
+                       const char *type, unsigned long flags, void *data)
 {
-	return call_int_hook(sb_mount, 0, dev_name, path, type, flags,
-			     data, data_size);
+	return call_int_hook(sb_mount, 0, dev_name, path, type, flags, data);
 }
 
 int security_sb_umount(struct vfsmount *mnt, int flags)
@@ -482,11 +436,6 @@ int security_sb_parse_opts_str(char *options, struct security_mnt_opts *opts)
 	return call_int_hook(sb_parse_opts_str, 0, options, opts);
 }
 EXPORT_SYMBOL(security_sb_parse_opts_str);
-
-int security_move_mount(const struct path *from_path, const struct path *to_path)
-{
-	return call_int_hook(move_mount, 0, from_path, to_path);
-}
 
 int security_inode_alloc(struct inode *inode)
 {
@@ -1081,12 +1030,7 @@ int security_kernel_create_files_as(struct cred *new, struct inode *inode)
 
 int security_kernel_module_request(char *kmod_name)
 {
-	int ret;
-
-	ret = call_int_hook(kernel_module_request, 0, kmod_name);
-	if (ret)
-		return ret;
-	return integrity_kernel_module_request(kmod_name);
+	return call_int_hook(kernel_module_request, 0, kmod_name);
 }
 
 int security_kernel_read_file(struct file *file, enum kernel_read_file_id id)
@@ -1111,16 +1055,6 @@ int security_kernel_post_read_file(struct file *file, char *buf, loff_t size,
 	return ima_post_read_file(file, buf, size, id);
 }
 EXPORT_SYMBOL_GPL(security_kernel_post_read_file);
-
-int security_kernel_load_data(enum kernel_load_data_id id)
-{
-	int ret;
-
-	ret = call_int_hook(kernel_load_data, 0, id);
-	if (ret)
-		return ret;
-	return ima_load_data(id);
-}
 
 int security_task_fix_setuid(struct cred *new, const struct cred *old,
 			     int flags)

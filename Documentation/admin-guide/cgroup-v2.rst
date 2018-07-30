@@ -48,13 +48,9 @@ v1 is available under Documentation/cgroup-v1/.
        5-2-1. Memory Interface Files
        5-2-2. Usage Guidelines
        5-2-3. Memory Ownership
-       5-2-4. OOM Killer
      5-3. IO
        5-3-1. IO Interface Files
        5-3-2. Writeback
-       5-3-3. IO Latency
-         5-3-3-1. How IO Latency Throttling Works
-         5-3-3-2. IO Latency Interface Files
      5-4. PID
        5-4-1. PID Interface Files
      5-5. Device
@@ -967,12 +963,6 @@ All time durations are in microseconds.
 	$PERIOD duration.  "max" for $MAX indicates no limit.  If only
 	one number is written, $MAX is updated.
 
-  cpu.pressure
-	A read-only nested-key file which exists on non-root cgroups.
-
-	Shows pressure stall information for CPU. See
-	Documentation/accounting/psi.txt for details.
-
 
 Memory
 ------
@@ -1078,31 +1068,6 @@ PAGE_SIZE multiple when read back.
 	This is the ultimate protection mechanism.  As long as the
 	high limit is used and monitored properly, this limit's
 	utility is limited to providing the final safety net.
-
-  memory.oom_group
-
-	A read-write single value file which exists on non-root
-	cgroups.  The default is "0".
-
-	If set, OOM killer will consider the memory cgroup as an
-	indivisible memory consumers and compare it with other memory
-	consumers by it's memory footprint.
-	If such memory cgroup is selected as an OOM victim, all
-	processes belonging to it or it's descendants will be killed.
-
-	This applies to system-wide OOM conditions and reaching
-	the hard memory limit of the cgroup and their ancestor.
-	If OOM condition happens in a descendant cgroup with it's own
-	memory limit, the memory cgroup can't be considered
-	as an OOM victim, and OOM killer will not kill all belonging
-	tasks.
-
-	Also, OOM killer respects the /proc/pid/oom_score_adj value -1000,
-	and will never kill the unkillable task, even if memory.oom_group
-	is set.
-
-	If cgroup-aware OOM killer is not enabled, ENOTSUPP error
-	is returned on attempt to access the file.
 
   memory.events
 	A read-only flat-keyed file which exists on non-root cgroups.
@@ -1285,12 +1250,6 @@ PAGE_SIZE multiple when read back.
 	higher than the limit for an extended period of time.  This
 	reduces the impact on the workload and memory management.
 
-  memory.pressure
-	A read-only nested-key file which exists on non-root cgroups.
-
-	Shows pressure stall information for memory. See
-	Documentation/accounting/psi.txt for details.
-
 
 Usage Guidelines
 ~~~~~~~~~~~~~~~~
@@ -1333,54 +1292,6 @@ If a cgroup sweeps a considerable amount of memory which is expected
 to be accessed repeatedly by other cgroups, it may make sense to use
 POSIX_FADV_DONTNEED to relinquish the ownership of memory areas
 belonging to the affected files to ensure correct memory ownership.
-
-OOM Killer
-~~~~~~~~~~
-
-Cgroup v2 memory controller implements a cgroup-aware OOM killer.
-It means that it treats cgroups as first class OOM entities.
-
-Cgroup-aware OOM logic is turned off by default and requires
-passing the "groupoom" option on mounting cgroupfs. It can also
-by remounting cgroupfs with the following command::
-
-  # mount -o remount,groupoom $MOUNT_POINT
-
-Under OOM conditions the memory controller tries to make the best
-choice of a victim, looking for a memory cgroup with the largest
-memory footprint, considering leaf cgroups and cgroups with the
-memory.oom_group option set, which are considered to be an indivisible
-memory consumers.
-
-By default, OOM killer will kill the biggest task in the selected
-memory cgroup. A user can change this behavior by enabling
-the per-cgroup memory.oom_group option. If set, it causes
-the OOM killer to kill all processes attached to the cgroup,
-except processes with oom_score_adj set to -1000.
-
-This affects both system- and cgroup-wide OOMs. For a cgroup-wide OOM
-the memory controller considers only cgroups belonging to the sub-tree
-of the OOM'ing cgroup.
-
-Leaf cgroups and cgroups with oom_group option set are compared based
-on their cumulative memory usage. The root cgroup is treated as a
-leaf memory cgroup as well, so it is compared with other leaf memory
-cgroups. Due to internal implementation restrictions the size of
-the root cgroup is the cumulative sum of oom_badness of all its tasks
-(in other words oom_score_adj of each task is obeyed). Relying on
-oom_score_adj (apart from OOM_SCORE_ADJ_MIN) can lead to over- or
-underestimation of the root cgroup consumption and it is therefore
-discouraged. This might change in the future, however.
-
-If there are no cgroups with the enabled memory controller,
-the OOM killer is using the "traditional" process-based approach.
-
-Please, note that memory charges are not migrating if tasks
-are moved between different memory cgroups. Moving tasks with
-significant memory footprint may affect OOM victim selection logic.
-If it's a case, please, consider creating a common ancestor for
-the source and destination memory cgroups and enabling oom_group
-on ancestor layer.
 
 
 IO
@@ -1474,12 +1385,6 @@ IO Interface Files
 
 	  8:16 rbps=2097152 wbps=max riops=max wiops=max
 
-  io.pressure
-	A read-only nested-key file which exists on non-root cgroups.
-
-	Shows pressure stall information for IO. See
-	Documentation/accounting/psi.txt for details.
-
 
 Writeback
 ~~~~~~~~~
@@ -1540,82 +1445,6 @@ writeback as follows.
 	total available memory and applied the same way as
 	vm.dirty[_background]_ratio.
 
-
-IO Latency
-~~~~~~~~~~
-
-This is a cgroup v2 controller for IO workload protection.  You provide a group
-with a latency target, and if the average latency exceeds that target the
-controller will throttle any peers that have a lower latency target than the
-protected workload.
-
-The limits are only applied at the peer level in the hierarchy.  This means that
-in the diagram below, only groups A, B, and C will influence each other, and
-groups D and F will influence each other.  Group G will influence nobody.
-
-			[root]
-		/	   |		\
-		A	   B		C
-	       /  \        |
-	      D    F	   G
-
-
-So the ideal way to configure this is to set io.latency in groups A, B, and C.
-Generally you do not want to set a value lower than the latency your device
-supports.  Experiment to find the value that works best for your workload.
-Start at higher than the expected latency for your device and watch the
-total_lat_avg value in io.stat for your workload group to get an idea of the
-latency you see during normal operation.  Use this value as a basis for your
-real setting, setting at 10-15% higher than the value in io.stat.
-Experimentation is key here because total_lat_avg is a running total, so is the
-"statistics" portion of "lies, damned lies, and statistics."
-
-How IO Latency Throttling Works
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-io.latency is work conserving; so as long as everybody is meeting their latency
-target the controller doesn't do anything.  Once a group starts missing its
-target it begins throttling any peer group that has a higher target than itself.
-This throttling takes 2 forms:
-
-- Queue depth throttling.  This is the number of outstanding IO's a group is
-  allowed to have.  We will clamp down relatively quickly, starting at no limit
-  and going all the way down to 1 IO at a time.
-
-- Artificial delay induction.  There are certain types of IO that cannot be
-  throttled without possibly adversely affecting higher priority groups.  This
-  includes swapping and metadata IO.  These types of IO are allowed to occur
-  normally, however they are "charged" to the originating group.  If the
-  originating group is being throttled you will see the use_delay and delay
-  fields in io.stat increase.  The delay value is how many microseconds that are
-  being added to any process that runs in this group.  Because this number can
-  grow quite large if there is a lot of swapping or metadata IO occurring we
-  limit the individual delay events to 1 second at a time.
-
-Once the victimized group starts meeting its latency target again it will start
-unthrottling any peer groups that were throttled previously.  If the victimized
-group simply stops doing IO the global counter will unthrottle appropriately.
-
-IO Latency Interface Files
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-  io.latency
-	This takes a similar format as the other controllers.
-
-		"MAJOR:MINOR target=<target time in microseconds"
-
-  io.stat
-	If the controller is enabled you will see extra stats in io.stat in
-	addition to the normal ones.
-
-	  depth
-		This is the current queue depth for the group.
-
-	  avg_lat
-		The running average IO latency for this group in microseconds.
-		Running average is generally flawed, but will give an
-		administrator a general idea of the overall latency they can
-		expect for their workload on the given disk.
 
 PID
 ---

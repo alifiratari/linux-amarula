@@ -96,7 +96,7 @@ static const struct nla_policy connmark_policy[TCA_CONNMARK_MAX + 1] = {
 
 static int tcf_connmark_init(struct net *net, struct nlattr *nla,
 			     struct nlattr *est, struct tc_action **a,
-			     int ovr, int bind, bool rtnl_held,
+			     int ovr, int bind,
 			     struct netlink_ext_ack *extack)
 {
 	struct tc_action_net *tn = net_generic(net, connmark_net_id);
@@ -118,14 +118,11 @@ static int tcf_connmark_init(struct net *net, struct nlattr *nla,
 
 	parm = nla_data(tb[TCA_CONNMARK_PARMS]);
 
-	ret = tcf_idr_check_alloc(tn, &parm->index, a, bind);
-	if (!ret) {
+	if (!tcf_idr_check(tn, parm->index, a, bind)) {
 		ret = tcf_idr_create(tn, parm->index, est, a,
 				     &act_connmark_ops, bind, false);
-		if (ret) {
-			tcf_idr_cleanup(tn, parm->index);
+		if (ret)
 			return ret;
-		}
 
 		ci = to_connmark(*a);
 		ci->tcf_action = parm->action;
@@ -134,18 +131,16 @@ static int tcf_connmark_init(struct net *net, struct nlattr *nla,
 
 		tcf_idr_insert(tn, *a);
 		ret = ACT_P_CREATED;
-	} else if (ret > 0) {
+	} else {
 		ci = to_connmark(*a);
 		if (bind)
 			return 0;
-		if (!ovr) {
-			tcf_idr_release(*a, bind);
+		tcf_idr_release(*a, bind);
+		if (!ovr)
 			return -EEXIST;
-		}
 		/* replacing action and zone */
 		ci->tcf_action = parm->action;
 		ci->zone = parm->zone;
-		ret = 0;
 	}
 
 	return ret;
@@ -159,8 +154,8 @@ static inline int tcf_connmark_dump(struct sk_buff *skb, struct tc_action *a,
 
 	struct tc_connmark opt = {
 		.index   = ci->tcf_index,
-		.refcnt  = refcount_read(&ci->tcf_refcnt) - ref,
-		.bindcnt = atomic_read(&ci->tcf_bindcnt) - bind,
+		.refcnt  = ci->tcf_refcnt - ref,
+		.bindcnt = ci->tcf_bindcnt - bind,
 		.action  = ci->tcf_action,
 		.zone   = ci->zone,
 	};
@@ -198,13 +193,6 @@ static int tcf_connmark_search(struct net *net, struct tc_action **a, u32 index,
 	return tcf_idr_search(tn, a, index);
 }
 
-static int tcf_connmark_delete(struct net *net, u32 index)
-{
-	struct tc_action_net *tn = net_generic(net, connmark_net_id);
-
-	return tcf_idr_delete_index(tn, index);
-}
-
 static struct tc_action_ops act_connmark_ops = {
 	.kind		=	"connmark",
 	.type		=	TCA_ACT_CONNMARK,
@@ -214,7 +202,6 @@ static struct tc_action_ops act_connmark_ops = {
 	.init		=	tcf_connmark_init,
 	.walk		=	tcf_connmark_walker,
 	.lookup		=	tcf_connmark_search,
-	.delete		=	tcf_connmark_delete,
 	.size		=	sizeof(struct tcf_connmark_info),
 };
 

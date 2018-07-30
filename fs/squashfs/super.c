@@ -76,8 +76,7 @@ static const struct squashfs_decompressor *supported_squashfs_filesystem(short
 }
 
 
-static int squashfs_fill_super(struct super_block *sb,
-			       void *data, size_t data_size, int silent)
+static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct squashfs_sb_info *msblk;
 	struct squashfs_super_block *sblk = NULL;
@@ -371,8 +370,7 @@ static int squashfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 }
 
 
-static int squashfs_remount(struct super_block *sb, int *flags,
-			    char *data, size_t data_size)
+static int squashfs_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
 	*flags |= SB_RDONLY;
@@ -400,11 +398,9 @@ static void squashfs_put_super(struct super_block *sb)
 
 
 static struct dentry *squashfs_mount(struct file_system_type *fs_type,
-				     int flags, const char *dev_name,
-				     void *data, size_t data_size)
+				int flags, const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  squashfs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, squashfs_fill_super);
 }
 
 

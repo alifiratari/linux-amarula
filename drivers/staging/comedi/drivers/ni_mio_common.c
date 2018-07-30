@@ -4294,7 +4294,7 @@ static int pack_ad8842(int addr, int val, int *bitstring)
 struct caldac_struct {
 	int n_chans;
 	int n_bits;
-	int (*packbits)(int address, int value, int *bitstring);
+	int (*packbits)(int, int, int *);
 };
 
 static struct caldac_struct caldacs[] = {

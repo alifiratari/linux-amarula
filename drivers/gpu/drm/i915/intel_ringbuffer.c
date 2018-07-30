@@ -524,6 +524,8 @@ static int init_ring_common(struct intel_engine_cs *engine)
 		goto out;
 	}
 
+	intel_engine_init_hangcheck(engine);
+
 	if (INTEL_GEN(dev_priv) > 2)
 		I915_WRITE_MODE(engine, _MASKED_BIT_DISABLE(STOP_RING));
 
@@ -1087,7 +1089,6 @@ void intel_ring_unpin(struct intel_ring *ring)
 static struct i915_vma *
 intel_ring_create_vma(struct drm_i915_private *dev_priv, int size)
 {
-	struct i915_address_space *vm = &dev_priv->ggtt.vm;
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
 
@@ -1097,14 +1098,10 @@ intel_ring_create_vma(struct drm_i915_private *dev_priv, int size)
 	if (IS_ERR(obj))
 		return ERR_CAST(obj);
 
-	/*
-	 * Mark ring buffers as read-only from GPU side (so no stray overwrites)
-	 * if supported by the platform's GGTT.
-	 */
-	if (vm->has_read_only)
-		i915_gem_object_set_readonly(obj);
+	/* mark ring buffers as read-only from GPU side by default */
+	obj->gt_ro = 1;
 
-	vma = i915_vma_instance(obj, vm, NULL);
+	vma = i915_vma_instance(obj, &dev_priv->ggtt.vm, NULL);
 	if (IS_ERR(vma))
 		goto err;
 
@@ -1172,11 +1169,8 @@ static void intel_ring_context_destroy(struct intel_context *ce)
 {
 	GEM_BUG_ON(ce->pin_count);
 
-	if (!ce->state)
-		return;
-
-	GEM_BUG_ON(i915_gem_object_is_active(ce->state->obj));
-	i915_gem_object_put(ce->state->obj);
+	if (ce->state)
+		__i915_gem_object_release_unless_active(ce->state->obj);
 }
 
 static int __context_pin_ppgtt(struct i915_gem_context *ctx)

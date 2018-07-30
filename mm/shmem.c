@@ -29,7 +29,6 @@
 #include <linux/pagemap.h>
 #include <linux/file.h>
 #include <linux/mm.h>
-#include <linux/random.h>
 #include <linux/sched/signal.h>
 #include <linux/export.h>
 #include <linux/swap.h>
@@ -322,20 +321,24 @@ void shmem_uncharge(struct inode *inode, long pages)
 }
 
 /*
- * Replace item expected in xarray by a new item, while holding xa_lock.
+ * Replace item expected in radix tree by a new item, while holding tree lock.
  */
-static int shmem_replace_entry(struct address_space *mapping,
+static int shmem_radix_tree_replace(struct address_space *mapping,
 			pgoff_t index, void *expected, void *replacement)
 {
-	XA_STATE(xas, &mapping->i_pages, index);
+	struct radix_tree_node *node;
+	void __rcu **pslot;
 	void *item;
 
 	VM_BUG_ON(!expected);
 	VM_BUG_ON(!replacement);
-	item = xas_load(&xas);
+	item = __radix_tree_lookup(&mapping->i_pages, index, &node, &pslot);
+	if (!item)
+		return -ENOENT;
 	if (item != expected)
 		return -ENOENT;
-	xas_store(&xas, replacement);
+	__radix_tree_replace(&mapping->i_pages, node, pslot,
+			     replacement, NULL);
 	return 0;
 }
 
@@ -349,7 +352,12 @@ static int shmem_replace_entry(struct address_space *mapping,
 static bool shmem_confirm_swap(struct address_space *mapping,
 			       pgoff_t index, swp_entry_t swap)
 {
-	return xa_load(&mapping->i_pages, index) == swp_to_radix_entry(swap);
+	void *item;
+
+	rcu_read_lock();
+	item = radix_tree_lookup(&mapping->i_pages, index);
+	rcu_read_unlock();
+	return item == swp_to_radix_entry(swap);
 }
 
 /*
@@ -577,11 +585,9 @@ static inline bool is_huge_enabled(struct shmem_sb_info *sbinfo)
  */
 static int shmem_add_to_page_cache(struct page *page,
 				   struct address_space *mapping,
-				   pgoff_t index, void *expected, gfp_t gfp)
+				   pgoff_t index, void *expected)
 {
-	XA_STATE_ORDER(xas, &mapping->i_pages, index, compound_order(page));
-	unsigned long i = 0;
-	unsigned long nr = 1UL << compound_order(page);
+	int error, nr = hpage_nr_pages(page);
 
 	VM_BUG_ON_PAGE(PageTail(page), page);
 	VM_BUG_ON_PAGE(index != round_down(index, nr), page);
@@ -590,42 +596,50 @@ static int shmem_add_to_page_cache(struct page *page,
 	VM_BUG_ON(expected && PageTransHuge(page));
 
 	page_ref_add(page, nr);
-	page->index = index;
 	page->mapping = mapping;
+	page->index = index;
 
-	do {
-		void *entry;
-		xas_lock_irq(&xas);
-		entry = xas_find_conflict(&xas);
-		if (entry != expected)
-			xas_set_err(&xas, -EEXIST);
-		xas_create_range(&xas);
-		if (xas_error(&xas))
-			goto unlock;
-next:
-		xas_store(&xas, page + i);
-		if (++i < nr) {
-			xas_next(&xas);
-			goto next;
+	xa_lock_irq(&mapping->i_pages);
+	if (PageTransHuge(page)) {
+		void __rcu **results;
+		pgoff_t idx;
+		int i;
+
+		error = 0;
+		if (radix_tree_gang_lookup_slot(&mapping->i_pages,
+					&results, &idx, index, 1) &&
+				idx < index + HPAGE_PMD_NR) {
+			error = -EEXIST;
 		}
-		if (PageTransHuge(page)) {
+
+		if (!error) {
+			for (i = 0; i < HPAGE_PMD_NR; i++) {
+				error = radix_tree_insert(&mapping->i_pages,
+						index + i, page + i);
+				VM_BUG_ON(error);
+			}
 			count_vm_event(THP_FILE_ALLOC);
-			__inc_node_page_state(page, NR_SHMEM_THPS);
 		}
-		mapping->nrpages += nr;
-		__mod_node_page_state(page_pgdat(page), NR_FILE_PAGES, nr);
-		__mod_node_page_state(page_pgdat(page), NR_SHMEM, nr);
-unlock:
-		xas_unlock_irq(&xas);
-	} while (xas_nomem(&xas, gfp));
-
-	if (xas_error(&xas)) {
-		page->mapping = NULL;
-		page_ref_sub(page, nr);
-		return xas_error(&xas);
+	} else if (!expected) {
+		error = radix_tree_insert(&mapping->i_pages, index, page);
+	} else {
+		error = shmem_radix_tree_replace(mapping, index, expected,
+								 page);
 	}
 
-	return 0;
+	if (!error) {
+		mapping->nrpages += nr;
+		if (PageTransHuge(page))
+			__inc_node_page_state(page, NR_SHMEM_THPS);
+		__mod_node_page_state(page_pgdat(page), NR_FILE_PAGES, nr);
+		__mod_node_page_state(page_pgdat(page), NR_SHMEM, nr);
+		xa_unlock_irq(&mapping->i_pages);
+	} else {
+		page->mapping = NULL;
+		xa_unlock_irq(&mapping->i_pages);
+		page_ref_sub(page, nr);
+	}
+	return error;
 }
 
 /*
@@ -639,7 +653,7 @@ static void shmem_delete_from_page_cache(struct page *page, void *radswap)
 	VM_BUG_ON_PAGE(PageCompound(page), page);
 
 	xa_lock_irq(&mapping->i_pages);
-	error = shmem_replace_entry(mapping, page->index, page, radswap);
+	error = shmem_radix_tree_replace(mapping, page->index, page, radswap);
 	page->mapping = NULL;
 	mapping->nrpages--;
 	__dec_node_page_state(page, NR_FILE_PAGES);
@@ -650,7 +664,7 @@ static void shmem_delete_from_page_cache(struct page *page, void *radswap)
 }
 
 /*
- * Remove swap entry from page cache, free the swap and its page cache.
+ * Remove swap entry from radix tree, free the swap and its page cache.
  */
 static int shmem_free_swap(struct address_space *mapping,
 			   pgoff_t index, void *radswap)
@@ -658,7 +672,7 @@ static int shmem_free_swap(struct address_space *mapping,
 	void *old;
 
 	xa_lock_irq(&mapping->i_pages);
-	old = __xa_cmpxchg(&mapping->i_pages, index, radswap, NULL, 0);
+	old = radix_tree_delete_item(&mapping->i_pages, index, radswap);
 	xa_unlock_irq(&mapping->i_pages);
 	if (old != radswap)
 		return -ENOENT;
@@ -676,19 +690,29 @@ static int shmem_free_swap(struct address_space *mapping,
 unsigned long shmem_partial_swap_usage(struct address_space *mapping,
 						pgoff_t start, pgoff_t end)
 {
-	XA_STATE(xas, &mapping->i_pages, start);
+	struct radix_tree_iter iter;
+	void __rcu **slot;
 	struct page *page;
 	unsigned long swapped = 0;
 
 	rcu_read_lock();
-	xas_for_each(&xas, page, end - 1) {
-		if (xas_retry(&xas, page))
+
+	radix_tree_for_each_slot(slot, &mapping->i_pages, &iter, start) {
+		if (iter.index >= end)
+			break;
+
+		page = radix_tree_deref_slot(slot);
+
+		if (radix_tree_deref_retry(page)) {
+			slot = radix_tree_iter_retry(&iter);
 			continue;
-		if (xa_is_value(page))
+		}
+
+		if (radix_tree_exceptional_entry(page))
 			swapped++;
 
 		if (need_resched()) {
-			xas_pause(&xas);
+			slot = radix_tree_iter_resume(slot, &iter);
 			cond_resched_rcu();
 		}
 	}
@@ -763,7 +787,7 @@ void shmem_unlock_mapping(struct address_space *mapping)
 }
 
 /*
- * Remove range of pages and swap entries from page cache, and free them.
+ * Remove range of pages and swap entries from radix tree, and free them.
  * If !unfalloc, truncate or punch hole; if unfalloc, undo failed fallocate.
  */
 static void shmem_undo_range(struct inode *inode, loff_t lstart, loff_t lend,
@@ -799,7 +823,7 @@ static void shmem_undo_range(struct inode *inode, loff_t lstart, loff_t lend,
 			if (index >= end)
 				break;
 
-			if (xa_is_value(page)) {
+			if (radix_tree_exceptional_entry(page)) {
 				if (unfalloc)
 					continue;
 				nr_swaps_freed += !shmem_free_swap(mapping,
@@ -896,7 +920,7 @@ static void shmem_undo_range(struct inode *inode, loff_t lstart, loff_t lend,
 			if (index >= end)
 				break;
 
-			if (xa_is_value(page)) {
+			if (radix_tree_exceptional_entry(page)) {
 				if (unfalloc)
 					continue;
 				if (shmem_free_swap(mapping, index, page)) {
@@ -1085,27 +1109,34 @@ static void shmem_evict_inode(struct inode *inode)
 	clear_inode(inode);
 }
 
-static unsigned long find_swap_entry(struct xarray *xa, void *item)
+static unsigned long find_swap_entry(struct radix_tree_root *root, void *item)
 {
-	XA_STATE(xas, xa, 0);
+	struct radix_tree_iter iter;
+	void __rcu **slot;
+	unsigned long found = -1;
 	unsigned int checked = 0;
-	void *entry;
 
 	rcu_read_lock();
-	xas_for_each(&xas, entry, ULONG_MAX) {
-		if (xas_retry(&xas, entry))
+	radix_tree_for_each_slot(slot, root, &iter, 0) {
+		void *entry = radix_tree_deref_slot(slot);
+
+		if (radix_tree_deref_retry(entry)) {
+			slot = radix_tree_iter_retry(&iter);
 			continue;
-		if (entry == item)
+		}
+		if (entry == item) {
+			found = iter.index;
 			break;
+		}
 		checked++;
-		if ((checked % XA_CHECK_SCHED) != 0)
+		if ((checked % 4096) != 0)
 			continue;
-		xas_pause(&xas);
+		slot = radix_tree_iter_resume(slot, &iter);
 		cond_resched_rcu();
 	}
-	rcu_read_unlock();
 
-	return xas_invalid(&xas) ? -1 : xas.xa_index;
+	rcu_read_unlock();
+	return found;
 }
 
 /*
@@ -1143,10 +1174,10 @@ static int shmem_unuse_inode(struct shmem_inode_info *info,
 		 * We needed to drop mutex to make that restrictive page
 		 * allocation, but the inode might have been freed while we
 		 * dropped it: although a racing shmem_evict_inode() cannot
-		 * complete without emptying the page cache, our page lock
+		 * complete without emptying the radix_tree, our page lock
 		 * on this swapcache page is not enough to prevent that -
 		 * free_swap_and_cache() of our swap entry will only
-		 * trylock_page(), removing swap from page cache whatever.
+		 * trylock_page(), removing swap from radix_tree whatever.
 		 *
 		 * We must not proceed to shmem_add_to_page_cache() if the
 		 * inode has been freed, but of course we cannot rely on
@@ -1168,7 +1199,7 @@ static int shmem_unuse_inode(struct shmem_inode_info *info,
 	 */
 	if (!error)
 		error = shmem_add_to_page_cache(*pagep, mapping, index,
-						radswap, gfp);
+						radswap);
 	if (error != -ENOMEM) {
 		/*
 		 * Truncation and eviction use free_swap_and_cache(), which
@@ -1208,11 +1239,11 @@ int shmem_unuse(swp_entry_t swap, struct page *page)
 	 * the shmem_swaplist_mutex which might hold up shmem_writepage().
 	 * Charged back to the user (not to caller) when swap account is used.
 	 */
-	error = mem_cgroup_try_charge_delay(page, current->mm, GFP_KERNEL,
-					    &memcg, false);
+	error = mem_cgroup_try_charge(page, current->mm, GFP_KERNEL, &memcg,
+			false);
 	if (error)
 		goto out;
-	/* No memory allocation: swap entry occupies the slot for the page */
+	/* No radix_tree_preload: swap entry keeps a place for page in tree */
 	error = -EAGAIN;
 
 	mutex_lock(&shmem_swaplist_mutex);
@@ -1393,7 +1424,6 @@ static void shmem_pseudo_vma_init(struct vm_area_struct *vma,
 	/* Bias interleave by inode number to distribute better across nodes */
 	vma->vm_pgoff = index + info->vfs_inode.i_ino;
 	vma->vm_policy = mpol_shared_policy_lookup(&info->policy, index);
-	vma->vm_ops = &dummy_vm_ops;
 }
 
 static void shmem_pseudo_vma_destroy(struct vm_area_struct *vma)
@@ -1422,17 +1452,23 @@ static struct page *shmem_alloc_hugepage(gfp_t gfp,
 		struct shmem_inode_info *info, pgoff_t index)
 {
 	struct vm_area_struct pvma;
-	struct address_space *mapping = info->vfs_inode.i_mapping;
-	pgoff_t hindex;
+	struct inode *inode = &info->vfs_inode;
+	struct address_space *mapping = inode->i_mapping;
+	pgoff_t idx, hindex;
+	void __rcu **results;
 	struct page *page;
 
 	if (!IS_ENABLED(CONFIG_TRANSPARENT_HUGE_PAGECACHE))
 		return NULL;
 
 	hindex = round_down(index, HPAGE_PMD_NR);
-	if (xa_find(&mapping->i_pages, &hindex, hindex + HPAGE_PMD_NR - 1,
-								XA_PRESENT))
+	rcu_read_lock();
+	if (radix_tree_gang_lookup_slot(&mapping->i_pages, &results, &idx,
+				hindex, 1) && idx < hindex + HPAGE_PMD_NR) {
+		rcu_read_unlock();
 		return NULL;
+	}
+	rcu_read_unlock();
 
 	shmem_pseudo_vma_init(&pvma, info, hindex);
 	page = alloc_pages_vma(gfp | __GFP_COMP | __GFP_NORETRY | __GFP_NOWARN,
@@ -1541,7 +1577,8 @@ static int shmem_replace_page(struct page **pagep, gfp_t gfp,
 	 * a nice clean interface for us to replace oldpage by newpage there.
 	 */
 	xa_lock_irq(&swap_mapping->i_pages);
-	error = shmem_replace_entry(swap_mapping, swap_index, oldpage, newpage);
+	error = shmem_radix_tree_replace(swap_mapping, swap_index, oldpage,
+								   newpage);
 	if (!error) {
 		__inc_node_page_state(newpage, NR_FILE_PAGES);
 		__dec_node_page_state(oldpage, NR_FILE_PAGES);
@@ -1604,7 +1641,7 @@ static int shmem_getpage_gfp(struct inode *inode, pgoff_t index,
 repeat:
 	swap.val = 0;
 	page = find_lock_entry(mapping, index);
-	if (xa_is_value(page)) {
+	if (radix_tree_exceptional_entry(page)) {
 		swap = radix_to_swp_entry(page);
 		page = NULL;
 	}
@@ -1675,11 +1712,11 @@ repeat:
 				goto failed;
 		}
 
-		error = mem_cgroup_try_charge_delay(page, charge_mm, gfp, &memcg,
+		error = mem_cgroup_try_charge(page, charge_mm, gfp, &memcg,
 				false);
 		if (!error) {
 			error = shmem_add_to_page_cache(page, mapping, index,
-						swp_to_radix_entry(swap), gfp);
+						swp_to_radix_entry(swap));
 			/*
 			 * We already confirmed swap under page lock, and make
 			 * no memory allocation here, so usually no possibility
@@ -1781,12 +1818,17 @@ alloc_nohuge:		page = shmem_alloc_and_acct_page(gfp, inode,
 		if (sgp == SGP_WRITE)
 			__SetPageReferenced(page);
 
-		error = mem_cgroup_try_charge_delay(page, charge_mm, gfp, &memcg,
+		error = mem_cgroup_try_charge(page, charge_mm, gfp, &memcg,
 				PageTransHuge(page));
 		if (error)
 			goto unacct;
-		error = shmem_add_to_page_cache(page, mapping, hindex,
-						NULL, gfp & GFP_RECLAIM_MASK);
+		error = radix_tree_maybe_preload_order(gfp & GFP_RECLAIM_MASK,
+				compound_order(page));
+		if (!error) {
+			error = shmem_add_to_page_cache(page, mapping, hindex,
+							NULL);
+			radix_tree_preload_end();
+		}
 		if (error) {
 			mem_cgroup_cancel_charge(page, memcg,
 					PageTransHuge(page));
@@ -1887,7 +1929,7 @@ unlock:
 		spin_unlock_irq(&info->lock);
 		goto repeat;
 	}
-	if (error == -EEXIST)
+	if (error == -EEXIST)	/* from above or from radix_tree_insert */
 		goto repeat;
 	return error;
 }
@@ -2145,7 +2187,7 @@ static struct inode *shmem_get_inode(struct super_block *sb, const struct inode 
 		inode_init_owner(inode, dir, mode);
 		inode->i_blocks = 0;
 		inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
-		inode->i_generation = prandom_u32();
+		inode->i_generation = get_seconds();
 		info = SHMEM_I(inode);
 		memset(info, 0, (char *)inode - (char *)info);
 		spin_lock_init(&info->lock);
@@ -2249,12 +2291,15 @@ static int shmem_mfill_atomic_pte(struct mm_struct *dst_mm,
 	__SetPageSwapBacked(page);
 	__SetPageUptodate(page);
 
-	ret = mem_cgroup_try_charge_delay(page, dst_mm, gfp, &memcg, false);
+	ret = mem_cgroup_try_charge(page, dst_mm, gfp, &memcg, false);
 	if (ret)
 		goto out_release;
 
-	ret = shmem_add_to_page_cache(page, mapping, pgoff, NULL,
-						gfp & GFP_RECLAIM_MASK);
+	ret = radix_tree_maybe_preload(gfp & GFP_RECLAIM_MASK);
+	if (!ret) {
+		ret = shmem_add_to_page_cache(page, mapping, pgoff, NULL);
+		radix_tree_preload_end();
+	}
 	if (ret)
 		goto out_release_uncharge;
 
@@ -2499,7 +2544,7 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 }
 
 /*
- * llseek SEEK_DATA or SEEK_HOLE through the page cache.
+ * llseek SEEK_DATA or SEEK_HOLE through the radix_tree.
  */
 static pgoff_t shmem_seek_hole_data(struct address_space *mapping,
 				    pgoff_t index, pgoff_t end, int whence)
@@ -2529,7 +2574,7 @@ static pgoff_t shmem_seek_hole_data(struct address_space *mapping,
 				index = indices[i];
 			}
 			page = pvec.pages[i];
-			if (page && !xa_is_value(page)) {
+			if (page && !radix_tree_exceptional_entry(page)) {
 				if (!PageUptodate(page))
 					page = NULL;
 			}
@@ -3347,8 +3392,7 @@ error:
 
 }
 
-static int shmem_remount_fs(struct super_block *sb, int *flags,
-			    char *data, size_t data_size)
+static int shmem_remount_fs(struct super_block *sb, int *flags, char *data)
 {
 	struct shmem_sb_info *sbinfo = SHMEM_SB(sb);
 	struct shmem_sb_info config = *sbinfo;
@@ -3431,8 +3475,7 @@ static void shmem_put_super(struct super_block *sb)
 	sb->s_fs_info = NULL;
 }
 
-int shmem_fill_super(struct super_block *sb, void *data, size_t data_size,
-		     int silent)
+int shmem_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode;
 	struct shmem_sb_info *sbinfo;
@@ -3646,9 +3689,9 @@ static const struct vm_operations_struct shmem_vm_ops = {
 };
 
 static struct dentry *shmem_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_nodev(fs_type, flags, data, data_size, shmem_fill_super);
+	return mount_nodev(fs_type, flags, data, shmem_fill_super);
 }
 
 static struct file_system_type shmem_fs_type = {
@@ -3853,11 +3896,18 @@ EXPORT_SYMBOL_GPL(shmem_truncate_range);
 
 /* common code */
 
+static const struct dentry_operations anon_ops = {
+	.d_dname = simple_dname
+};
+
 static struct file *__shmem_file_setup(struct vfsmount *mnt, const char *name, loff_t size,
 				       unsigned long flags, unsigned int i_flags)
 {
-	struct inode *inode;
 	struct file *res;
+	struct inode *inode;
+	struct path path;
+	struct super_block *sb;
+	struct qstr this;
 
 	if (IS_ERR(mnt))
 		return ERR_CAST(mnt);
@@ -3868,22 +3918,41 @@ static struct file *__shmem_file_setup(struct vfsmount *mnt, const char *name, l
 	if (shmem_acct_size(flags, size))
 		return ERR_PTR(-ENOMEM);
 
-	inode = shmem_get_inode(mnt->mnt_sb, NULL, S_IFREG | S_IRWXUGO, 0,
-				flags);
-	if (unlikely(!inode)) {
-		shmem_unacct_size(flags, size);
-		return ERR_PTR(-ENOSPC);
-	}
+	res = ERR_PTR(-ENOMEM);
+	this.name = name;
+	this.len = strlen(name);
+	this.hash = 0; /* will go */
+	sb = mnt->mnt_sb;
+	path.mnt = mntget(mnt);
+	path.dentry = d_alloc_pseudo(sb, &this);
+	if (!path.dentry)
+		goto put_memory;
+	d_set_d_op(path.dentry, &anon_ops);
+
+	res = ERR_PTR(-ENOSPC);
+	inode = shmem_get_inode(sb, NULL, S_IFREG | 0777, 0, flags);
+	if (!inode)
+		goto put_memory;
+
 	inode->i_flags |= i_flags;
+	d_instantiate(path.dentry, inode);
 	inode->i_size = size;
 	clear_nlink(inode);	/* It is unlinked */
 	res = ERR_PTR(ramfs_nommu_expand_for_mapping(inode, size));
-	if (!IS_ERR(res))
-		res = alloc_file_pseudo(inode, mnt, name,
-				FMODE_WRITE | FMODE_READ,
-				&shmem_file_operations);
 	if (IS_ERR(res))
-		iput(inode);
+		goto put_path;
+
+	res = alloc_file(&path, FMODE_WRITE | FMODE_READ,
+		  &shmem_file_operations);
+	if (IS_ERR(res))
+		goto put_path;
+
+	return res;
+
+put_memory:
+	shmem_unacct_size(flags, size);
+put_path:
+	path_put(&path);
 	return res;
 }
 

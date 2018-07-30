@@ -127,13 +127,13 @@ enum o2hb_heartbeat_modes {
 	O2HB_HEARTBEAT_NUM_MODES,
 };
 
-static const char *o2hb_heartbeat_mode_desc[O2HB_HEARTBEAT_NUM_MODES] = {
-	"local",	/* O2HB_HEARTBEAT_LOCAL */
-	"global",	/* O2HB_HEARTBEAT_GLOBAL */
+char *o2hb_heartbeat_mode_desc[O2HB_HEARTBEAT_NUM_MODES] = {
+		"local",	/* O2HB_HEARTBEAT_LOCAL */
+		"global",	/* O2HB_HEARTBEAT_GLOBAL */
 };
 
 unsigned int o2hb_dead_threshold = O2HB_DEFAULT_DEAD_THRESHOLD;
-static unsigned int o2hb_heartbeat_mode = O2HB_HEARTBEAT_LOCAL;
+unsigned int o2hb_heartbeat_mode = O2HB_HEARTBEAT_LOCAL;
 
 /*
  * o2hb_dependent_users tracks the number of registered callbacks that depend
@@ -141,7 +141,7 @@ static unsigned int o2hb_heartbeat_mode = O2HB_HEARTBEAT_LOCAL;
  * However only o2dlm depends on the heartbeat. It does not want the heartbeat
  * to stop while a dlm domain is still active.
  */
-static unsigned int o2hb_dependent_users;
+unsigned int o2hb_dependent_users;
 
 /*
  * In global heartbeat mode, all regions are pinned if there are one or more
@@ -2486,7 +2486,7 @@ unlock:
 	return ret;
 }
 
-static void o2hb_region_dec_user(const char *region_uuid)
+void o2hb_region_dec_user(const char *region_uuid)
 {
 	spin_lock(&o2hb_live_lock);
 

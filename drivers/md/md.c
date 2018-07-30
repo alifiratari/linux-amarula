@@ -5547,8 +5547,7 @@ int md_run(struct mddev *mddev)
 		else
 			pr_warn("md: personality for level %s is not loaded!\n",
 				mddev->clevel);
-		err = -EINVAL;
-		goto abort;
+		return -EINVAL;
 	}
 	spin_unlock(&pers_lock);
 	if (mddev->level != pers->level) {
@@ -5561,8 +5560,7 @@ int md_run(struct mddev *mddev)
 	    pers->start_reshape == NULL) {
 		/* This personality cannot handle reshaping... */
 		module_put(pers->owner);
-		err = -EINVAL;
-		goto abort;
+		return -EINVAL;
 	}
 
 	if (pers->sync_request) {
@@ -5631,7 +5629,7 @@ int md_run(struct mddev *mddev)
 		mddev->private = NULL;
 		module_put(pers->owner);
 		bitmap_destroy(mddev);
-		goto abort;
+		return err;
 	}
 	if (mddev->queue) {
 		bool nonrot = true;
@@ -7680,23 +7678,6 @@ static int status_resync(struct seq_file *seq, struct mddev *mddev)
 		resync -= atomic_read(&mddev->recovery_active);
 
 	if (resync == 0) {
-		if (test_bit(MD_RESYNCING_REMOTE, &mddev->recovery)) {
-			struct md_rdev *rdev;
-
-			rdev_for_each(rdev, mddev)
-				if (rdev->raid_disk >= 0 &&
-				    !test_bit(Faulty, &rdev->flags) &&
-				    rdev->recovery_offset != MaxSector &&
-				    rdev->recovery_offset) {
-					seq_printf(seq, "\trecover=REMOTE");
-					return 1;
-				}
-			if (mddev->reshape_position != MaxSector)
-				seq_printf(seq, "\treshape=REMOTE");
-			else
-				seq_printf(seq, "\tresync=REMOTE");
-			return 1;
-		}
 		if (mddev->recovery_cp < MaxSector) {
 			seq_printf(seq, "\tresync=PENDING");
 			return 1;

@@ -502,8 +502,7 @@ static void cramfs_kill_sb(struct super_block *sb)
 	kfree(sbi);
 }
 
-static int cramfs_remount(struct super_block *sb, int *flags,
-			  char *data, size_t data_size)
+static int cramfs_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
 	*flags |= SB_RDONLY;
@@ -604,8 +603,7 @@ static int cramfs_finalize_super(struct super_block *sb,
 	return 0;
 }
 
-static int cramfs_blkdev_fill_super(struct super_block *sb,
-				    void *data, size_t data_size,
+static int cramfs_blkdev_fill_super(struct super_block *sb, void *data,
 				    int silent)
 {
 	struct cramfs_sb_info *sbi;
@@ -627,8 +625,8 @@ static int cramfs_blkdev_fill_super(struct super_block *sb,
 	return cramfs_finalize_super(sb, &super.root);
 }
 
-static int cramfs_mtd_fill_super(struct super_block *sb,
-				 void *data, size_t data_size, int silent)
+static int cramfs_mtd_fill_super(struct super_block *sb, void *data,
+				 int silent)
 {
 	struct cramfs_sb_info *sbi;
 	struct cramfs_super super;
@@ -950,19 +948,18 @@ static const struct super_operations cramfs_ops = {
 };
 
 static struct dentry *cramfs_mount(struct file_system_type *fs_type, int flags,
-				   const char *dev_name,
-				   void *data, size_t data_size)
+				   const char *dev_name, void *data)
 {
 	struct dentry *ret = ERR_PTR(-ENOPROTOOPT);
 
 	if (IS_ENABLED(CONFIG_CRAMFS_MTD)) {
-		ret = mount_mtd(fs_type, flags, dev_name, data, data_size,
+		ret = mount_mtd(fs_type, flags, dev_name, data,
 				cramfs_mtd_fill_super);
 		if (!IS_ERR(ret))
 			return ret;
 	}
 	if (IS_ENABLED(CONFIG_CRAMFS_BLOCKDEV)) {
-		ret = mount_bdev(fs_type, flags, dev_name, data, data_size,
+		ret = mount_bdev(fs_type, flags, dev_name, data,
 				 cramfs_blkdev_fill_super);
 	}
 	return ret;

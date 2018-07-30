@@ -181,7 +181,7 @@ static const u8 *mipi_exec_send_packet(struct intel_dsi *intel_dsi,
 		break;
 	}
 
-	vlv_dsi_wait_for_fifo_empty(intel_dsi, port);
+	wait_for_dsi_fifo_empty(intel_dsi, port);
 
 out:
 	data += len;

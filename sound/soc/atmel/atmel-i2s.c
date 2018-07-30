@@ -206,6 +206,7 @@ struct atmel_i2s_dev {
 	struct regmap				*regmap;
 	struct clk				*pclk;
 	struct clk				*gclk;
+	struct clk				*aclk;
 	struct snd_dmaengine_dai_dma_data	playback;
 	struct snd_dmaengine_dai_dma_data	capture;
 	unsigned int				fmt;
@@ -302,7 +303,7 @@ static int atmel_i2s_get_gck_param(struct atmel_i2s_dev *dev, int fs)
 {
 	int i, best;
 
-	if (!dev->gclk) {
+	if (!dev->gclk || !dev->aclk) {
 		dev_err(dev->dev, "cannot generate the I2S Master Clock\n");
 		return -EINVAL;
 	}
@@ -420,7 +421,7 @@ static int atmel_i2s_switch_mck_generator(struct atmel_i2s_dev *dev,
 					  bool enabled)
 {
 	unsigned int mr, mr_mask;
-	unsigned long gclk_rate;
+	unsigned long aclk_rate;
 	int ret;
 
 	mr = 0;
@@ -444,18 +445,35 @@ static int atmel_i2s_switch_mck_generator(struct atmel_i2s_dev *dev,
 		/* Disable/unprepare the PMC generated clock. */
 		clk_disable_unprepare(dev->gclk);
 
+		/* Disable/unprepare the PLL audio clock. */
+		clk_disable_unprepare(dev->aclk);
 		return 0;
 	}
 
 	if (!dev->gck_param)
 		return -EINVAL;
 
-	gclk_rate = dev->gck_param->mck * (dev->gck_param->imckdiv + 1);
+	aclk_rate = dev->gck_param->mck * (dev->gck_param->imckdiv + 1);
 
-	ret = clk_set_rate(dev->gclk, gclk_rate);
+	/* Fist change the PLL audio clock frequency ... */
+	ret = clk_set_rate(dev->aclk, aclk_rate);
 	if (ret)
 		return ret;
 
+	/*
+	 * ... then set the PMC generated clock rate to the very same frequency
+	 * to set the gclk parent to aclk.
+	 */
+	ret = clk_set_rate(dev->gclk, aclk_rate);
+	if (ret)
+		return ret;
+
+	/* Prepare and enable the PLL audio clock first ... */
+	ret = clk_prepare_enable(dev->aclk);
+	if (ret)
+		return ret;
+
+	/* ... then prepare and enable the PMC generated clock. */
 	ret = clk_prepare_enable(dev->gclk);
 	if (ret)
 		return ret;
@@ -650,14 +668,28 @@ static int atmel_i2s_probe(struct platform_device *pdev)
 		return err;
 	}
 
-	/* Get audio clock to generate the I2S Master Clock (I2S_MCK) */
+	/* Get audio clocks to generate the I2S Master Clock (I2S_MCK) */
+	dev->aclk = devm_clk_get(&pdev->dev, "aclk");
 	dev->gclk = devm_clk_get(&pdev->dev, "gclk");
-	if (IS_ERR(dev->gclk)) {
-		if (PTR_ERR(dev->gclk) == -EPROBE_DEFER)
+	if (IS_ERR(dev->aclk) && IS_ERR(dev->gclk)) {
+		if (PTR_ERR(dev->aclk) == -EPROBE_DEFER ||
+		    PTR_ERR(dev->gclk) == -EPROBE_DEFER)
 			return -EPROBE_DEFER;
 		/* Master Mode not supported */
+		dev->aclk = NULL;
 		dev->gclk = NULL;
+	} else if (IS_ERR(dev->gclk)) {
+		err = PTR_ERR(dev->gclk);
+		dev_err(&pdev->dev,
+			"failed to get the PMC generated clock: %d\n", err);
+		return err;
+	} else if (IS_ERR(dev->aclk)) {
+		err = PTR_ERR(dev->aclk);
+		dev_err(&pdev->dev,
+			"failed to get the PLL audio clock: %d\n", err);
+		return err;
 	}
+
 	dev->dev = &pdev->dev;
 	dev->regmap = regmap;
 	platform_set_drvdata(pdev, dev);

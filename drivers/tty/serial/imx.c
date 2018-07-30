@@ -314,8 +314,7 @@ static u32 imx_uart_readl(struct imx_port *sport, u32 offset)
 		/*
 		 * UCR2_SRST is the only bit in the cached registers that might
 		 * differ from the value that was last written. As it only
-		 * automatically becomes one after being cleared, reread
-		 * conditionally.
+		 * clears after being set, reread conditionally.
 		 */
 		if (!(sport->ucr2 & UCR2_SRST))
 			sport->ucr2 = readl(sport->port.membase + offset);
@@ -1052,7 +1051,7 @@ static void imx_uart_dma_rx_callback(void *data)
 	unsigned int r_bytes;
 	unsigned int bd_size;
 
-	status = dmaengine_tx_status(chan, sport->rx_cookie, &state);
+	status = dmaengine_tx_status(chan, (dma_cookie_t)0, &state);
 
 	if (status == DMA_ERROR) {
 		imx_uart_clear_rx_errors(sport);

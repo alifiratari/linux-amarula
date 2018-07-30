@@ -83,13 +83,7 @@ int __cifs_calc_signature(struct smb_rqst *rqst,
 
 		kaddr = (char *) kmap(rqst->rq_pages[i]) + offset;
 
-		rc = crypto_shash_update(shash, kaddr, len);
-		if (rc) {
-			cifs_dbg(VFS, "%s: Could not update with payload\n",
-				 __func__);
-			kunmap(rqst->rq_pages[i]);
-			return rc;
-		}
+		crypto_shash_update(shash, kaddr, len);
 
 		kunmap(rqst->rq_pages[i]);
 	}
@@ -458,7 +452,7 @@ find_timestamp(struct cifs_ses *ses)
 	unsigned char *blobptr;
 	unsigned char *blobend;
 	struct ntlmssp2_name *attrptr;
-	struct timespec64 ts;
+	struct timespec ts;
 
 	if (!ses->auth_key.len || !ses->auth_key.response)
 		return 0;
@@ -483,7 +477,7 @@ find_timestamp(struct cifs_ses *ses)
 		blobptr += attrsize; /* advance attr value */
 	}
 
-	ktime_get_real_ts64(&ts);
+	ktime_get_real_ts(&ts);
 	return cpu_to_le64(cifs_UnixTimeToNT(ts));
 }
 

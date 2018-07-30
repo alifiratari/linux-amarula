@@ -28,14 +28,10 @@ static inline int sched_info_on(void)
 	return 1;
 #elif defined(CONFIG_TASK_DELAY_ACCT)
 	extern int delayacct_on;
-	if (delayacct_on)
-		return 1;
-#elif defined(CONFIG_PSI)
-	extern bool psi_disabled;
-	if (!psi_disabled)
-		return 1;
-#endif
+	return delayacct_on;
+#else
 	return 0;
+#endif
 }
 
 #ifdef CONFIG_SCHEDSTATS

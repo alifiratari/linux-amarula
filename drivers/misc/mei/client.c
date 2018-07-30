@@ -865,10 +865,8 @@ int mei_cl_irq_disconnect(struct mei_cl *cl, struct mei_cl_cb *cb,
 
 	msg_slots = mei_data2slots(sizeof(struct hbm_client_connect_request));
 	slots = mei_hbuf_empty_slots(dev);
-	if (slots < 0)
-		return -EOVERFLOW;
 
-	if ((u32)slots < msg_slots)
+	if (slots < msg_slots)
 		return -EMSGSIZE;
 
 	ret = mei_cl_send_disconnect(cl, cb);
@@ -1056,15 +1054,12 @@ int mei_cl_irq_connect(struct mei_cl *cl, struct mei_cl_cb *cb,
 	int rets;
 
 	msg_slots = mei_data2slots(sizeof(struct hbm_client_connect_request));
+	slots = mei_hbuf_empty_slots(dev);
 
 	if (mei_cl_is_other_connecting(cl))
 		return 0;
 
-	slots = mei_hbuf_empty_slots(dev);
-	if (slots < 0)
-		return -EOVERFLOW;
-
-	if ((u32)slots < msg_slots)
+	if (slots < msg_slots)
 		return -EMSGSIZE;
 
 	rets = mei_cl_send_connect(cl, cb);
@@ -1301,10 +1296,8 @@ int mei_cl_irq_notify(struct mei_cl *cl, struct mei_cl_cb *cb,
 
 	msg_slots = mei_data2slots(sizeof(struct hbm_client_connect_request));
 	slots = mei_hbuf_empty_slots(dev);
-	if (slots < 0)
-		return -EOVERFLOW;
 
-	if ((u32)slots < msg_slots)
+	if (slots < msg_slots)
 		return -EMSGSIZE;
 
 	request = mei_cl_notify_fop2req(cb->fop_type);
@@ -1580,9 +1573,6 @@ int mei_cl_irq_write(struct mei_cl *cl, struct mei_cl_cb *cb,
 	}
 
 	slots = mei_hbuf_empty_slots(dev);
-	if (slots < 0)
-		return -EOVERFLOW;
-
 	len = buf->size - cb->buf_idx;
 	msg_slots = mei_data2slots(len);
 
@@ -1591,11 +1581,11 @@ int mei_cl_irq_write(struct mei_cl *cl, struct mei_cl_cb *cb,
 	mei_hdr.reserved = 0;
 	mei_hdr.internal = cb->internal;
 
-	if ((u32)slots >= msg_slots) {
+	if (slots >= msg_slots) {
 		mei_hdr.length = len;
 		mei_hdr.msg_complete = 1;
 	/* Split the message only if we can write the whole host buffer */
-	} else if ((u32)slots == dev->hbuf_depth) {
+	} else if (slots == dev->hbuf_depth) {
 		msg_slots = slots;
 		len = (slots * sizeof(u32)) - sizeof(struct mei_msg_hdr);
 		mei_hdr.length = len;
@@ -1644,13 +1634,13 @@ err:
  *
  * Return: number of bytes sent on success, <0 on failure.
  */
-ssize_t mei_cl_write(struct mei_cl *cl, struct mei_cl_cb *cb)
+int mei_cl_write(struct mei_cl *cl, struct mei_cl_cb *cb)
 {
 	struct mei_device *dev;
 	struct mei_msg_data *buf;
 	struct mei_msg_hdr mei_hdr;
-	size_t len;
-	ssize_t rets;
+	int size;
+	int rets;
 	bool blocking;
 
 	if (WARN_ON(!cl || !cl->dev))
@@ -1662,15 +1652,15 @@ ssize_t mei_cl_write(struct mei_cl *cl, struct mei_cl_cb *cb)
 	dev = cl->dev;
 
 	buf = &cb->buf;
-	len = buf->size;
+	size = buf->size;
 	blocking = cb->blocking;
 
-	cl_dbg(dev, cl, "len=%zd\n", len);
+	cl_dbg(dev, cl, "size=%d\n", size);
 
 	rets = pm_runtime_get(dev->dev);
 	if (rets < 0 && rets != -EINPROGRESS) {
 		pm_runtime_put_noidle(dev->dev);
-		cl_err(dev, cl, "rpm: get failed %zd\n", rets);
+		cl_err(dev, cl, "rpm: get failed %d\n", rets);
 		goto free;
 	}
 
@@ -1689,21 +1679,21 @@ ssize_t mei_cl_write(struct mei_cl *cl, struct mei_cl_cb *cb)
 
 	if (rets == 0) {
 		cl_dbg(dev, cl, "No flow control credentials: not sending.\n");
-		rets = len;
+		rets = size;
 		goto out;
 	}
 	if (!mei_hbuf_acquire(dev)) {
 		cl_dbg(dev, cl, "Cannot acquire the host buffer: not sending.\n");
-		rets = len;
+		rets = size;
 		goto out;
 	}
 
 	/* Check for a maximum length */
-	if (len > mei_hbuf_max_len(dev)) {
+	if (size > mei_hbuf_max_len(dev)) {
 		mei_hdr.length = mei_hbuf_max_len(dev);
 		mei_hdr.msg_complete = 0;
 	} else {
-		mei_hdr.length = len;
+		mei_hdr.length = size;
 		mei_hdr.msg_complete = 1;
 	}
 
@@ -1745,7 +1735,7 @@ out:
 		}
 	}
 
-	rets = len;
+	rets = size;
 err:
 	cl_dbg(dev, cl, "rpm: autosuspend\n");
 	pm_runtime_mark_last_busy(dev->dev);

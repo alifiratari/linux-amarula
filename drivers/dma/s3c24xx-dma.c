@@ -35,7 +35,6 @@
 #include <linux/interrupt.h>
 #include <linux/clk.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/slab.h>
 #include <linux/platform_data/dma-s3c24xx.h>
 

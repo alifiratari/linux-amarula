@@ -225,7 +225,7 @@ static struct dentry *msdos_lookup(struct inode *dir, struct dentry *dentry,
 /***** Creates a directory entry (name is already formatted). */
 static int msdos_add_entry(struct inode *dir, const unsigned char *name,
 			   int is_dir, int is_hid, int cluster,
-			   struct timespec64 *ts, struct fat_slot_info *sinfo)
+			   struct timespec *ts, struct fat_slot_info *sinfo)
 {
 	struct msdos_sb_info *sbi = MSDOS_SB(dir->i_sb);
 	struct msdos_dir_entry de;
@@ -250,7 +250,7 @@ static int msdos_add_entry(struct inode *dir, const unsigned char *name,
 	if (err)
 		return err;
 
-	dir->i_ctime = dir->i_mtime = *ts;
+	dir->i_ctime = dir->i_mtime = timespec_to_timespec64(*ts);
 	if (IS_DIRSYNC(dir))
 		(void)fat_sync_inode(dir);
 	else
@@ -267,6 +267,7 @@ static int msdos_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	struct inode *inode = NULL;
 	struct fat_slot_info sinfo;
 	struct timespec64 ts;
+	struct timespec t;
 	unsigned char msdos_name[MSDOS_NAME];
 	int err, is_hid;
 
@@ -285,7 +286,8 @@ static int msdos_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	}
 
 	ts = current_time(dir);
-	err = msdos_add_entry(dir, msdos_name, 0, is_hid, 0, &ts, &sinfo);
+	t = timespec64_to_timespec(ts);
+	err = msdos_add_entry(dir, msdos_name, 0, is_hid, 0, &t, &sinfo);
 	if (err)
 		goto out;
 	inode = fat_build_inode(sb, sinfo.de, sinfo.i_pos);
@@ -345,6 +347,7 @@ static int msdos_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	struct inode *inode;
 	unsigned char msdos_name[MSDOS_NAME];
 	struct timespec64 ts;
+	struct timespec t;
 	int err, is_hid, cluster;
 
 	mutex_lock(&MSDOS_SB(sb)->s_lock);
@@ -362,12 +365,13 @@ static int msdos_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	}
 
 	ts = current_time(dir);
-	cluster = fat_alloc_new_dir(dir, &ts);
+	t = timespec64_to_timespec(ts);
+	cluster = fat_alloc_new_dir(dir, &t);
 	if (cluster < 0) {
 		err = cluster;
 		goto out;
 	}
-	err = msdos_add_entry(dir, msdos_name, 1, is_hid, cluster, &ts, &sinfo);
+	err = msdos_add_entry(dir, msdos_name, 1, is_hid, cluster, &t, &sinfo);
 	if (err)
 		goto out_free;
 	inc_nlink(dir);
@@ -499,8 +503,9 @@ static int do_msdos_rename(struct inode *old_dir, unsigned char *old_name,
 		new_i_pos = MSDOS_I(new_inode)->i_pos;
 		fat_detach(new_inode);
 	} else {
+		struct timespec t = timespec64_to_timespec(ts);
 		err = msdos_add_entry(new_dir, new_name, is_dir, is_hid, 0,
-				      &ts, &sinfo);
+				      &t, &sinfo);
 		if (err)
 			goto out;
 		new_i_pos = sinfo.i_pos;
@@ -646,18 +651,16 @@ static void setup(struct super_block *sb)
 	sb->s_flags |= SB_NOATIME;
 }
 
-static int msdos_fill_super(struct super_block *sb, void *data, size_t data_size,
-			    int silent)
+static int msdos_fill_super(struct super_block *sb, void *data, int silent)
 {
 	return fat_fill_super(sb, data, silent, 0, setup);
 }
 
 static struct dentry *msdos_mount(struct file_system_type *fs_type,
 			int flags, const char *dev_name,
-			void *data, size_t data_size)
+			void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  msdos_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, msdos_fill_super);
 }
 
 static struct file_system_type msdos_fs_type = {

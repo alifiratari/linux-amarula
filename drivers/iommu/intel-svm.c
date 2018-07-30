@@ -24,7 +24,6 @@
 #include <linux/pci-ats.h>
 #include <linux/dmar.h>
 #include <linux/interrupt.h>
-#include <linux/mm_types.h>
 #include <asm/page.h>
 
 #define PASID_ENTRY_P		BIT_ULL(0)
@@ -310,7 +309,7 @@ int intel_svm_bind_mm(struct device *dev, int *pasid, int flags, struct svm_dev_
 	int pasid_max;
 	int ret;
 
-	if (!iommu || !iommu->pasid_table)
+	if (WARN_ON(!iommu || !iommu->pasid_table))
 		return -EINVAL;
 
 	if (dev_is_pci(dev)) {
@@ -595,8 +594,7 @@ static irqreturn_t prq_event_thread(int irq, void *d)
 		struct vm_area_struct *vma;
 		struct page_req_dsc *req;
 		struct qi_desc resp;
-		int result;
-		vm_fault_t ret;
+		int ret, result;
 		u64 address;
 
 		handled = 1;

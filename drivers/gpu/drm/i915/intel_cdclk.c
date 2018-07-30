@@ -316,7 +316,6 @@ static void pnv_get_cdclk(struct drm_i915_private *dev_priv,
 		break;
 	default:
 		DRM_ERROR("Unknown pnv display core clock 0x%04x\n", gcfgc);
-		/* fall through */
 	case GC_DISPLAY_CLOCK_133_MHZ_PNV:
 		cdclk_state->cdclk = 133333;
 		break;
@@ -1798,7 +1797,6 @@ static int icl_calc_cdclk(int min_cdclk, unsigned int ref)
 	switch (ref) {
 	default:
 		MISSING_CASE(ref);
-		/* fall through */
 	case 24000:
 		ranges = ranges_24;
 		break;
@@ -1826,7 +1824,6 @@ static int icl_calc_cdclk_pll_vco(struct drm_i915_private *dev_priv, int cdclk)
 	switch (cdclk) {
 	default:
 		MISSING_CASE(cdclk);
-		/* fall through */
 	case 307200:
 	case 556800:
 	case 652800:
@@ -1899,7 +1896,6 @@ static u8 icl_calc_voltage_level(int cdclk)
 		return 1;
 	default:
 		MISSING_CASE(cdclk);
-		/* fall through */
 	case 652800:
 	case 648000:
 		return 2;
@@ -1917,7 +1913,6 @@ static void icl_get_cdclk(struct drm_i915_private *dev_priv,
 	switch (val & ICL_DSSM_CDCLK_PLL_REFCLK_MASK) {
 	default:
 		MISSING_CASE(val);
-		/* fall through */
 	case ICL_DSSM_CDCLK_PLL_REFCLK_24MHz:
 		cdclk_state->ref = 24000;
 		break;

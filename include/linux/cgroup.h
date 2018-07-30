@@ -627,11 +627,6 @@ static inline void pr_cont_cgroup_path(struct cgroup *cgrp)
 	pr_cont_kernfs_path(cgrp->kn);
 }
 
-static inline struct psi_group *cgroup_psi(struct cgroup *cgrp)
-{
-	return &cgrp->psi;
-}
-
 static inline void cgroup_init_kthreadd(void)
 {
 	/*
@@ -681,16 +676,6 @@ static inline int cgroup_init(void) { return 0; }
 static inline void cgroup_init_kthreadd(void) {}
 static inline void cgroup_kthread_ready(void) {}
 static inline union kernfs_node_id *cgroup_get_kernfs_id(struct cgroup *cgrp)
-{
-	return NULL;
-}
-
-static inline struct cgroup *cgroup_parent(struct cgroup *cgrp)
-{
-	return NULL;
-}
-
-static inline struct psi_group *cgroup_psi(struct cgroup *cgrp)
 {
 	return NULL;
 }
@@ -844,11 +829,10 @@ copy_cgroup_ns(unsigned long flags, struct user_namespace *user_ns,
 
 #endif /* !CONFIG_CGROUPS */
 
-static inline struct cgroup_namespace *get_cgroup_ns(struct cgroup_namespace *ns)
+static inline void get_cgroup_ns(struct cgroup_namespace *ns)
 {
 	if (ns)
 		refcount_inc(&ns->count);
-	return ns;
 }
 
 static inline void put_cgroup_ns(struct cgroup_namespace *ns)

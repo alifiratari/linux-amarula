@@ -387,6 +387,7 @@ set_phys_lowmem:
 	}
 	return err;
 }
+EXPORT_SYMBOL_GPL(skcipher_walk_next);
 
 static int skcipher_copy_iv(struct skcipher_walk *walk)
 {

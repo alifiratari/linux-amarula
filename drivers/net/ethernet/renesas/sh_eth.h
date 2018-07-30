@@ -383,12 +383,12 @@ enum ECSIPR_STATUS_MASK_BIT {
 
 /* APR */
 enum APR_BIT {
-	APR_AP = 0x0000ffff,
+	APR_AP = 0x00000001,
 };
 
 /* MPR */
 enum MPR_BIT {
-	MPR_MP = 0x0000ffff,
+	MPR_MP = 0x00000001,
 };
 
 /* TRSCER */
@@ -403,7 +403,8 @@ enum DESC_I_BIT {
 
 /* RPADIR */
 enum RPADIR_BIT {
-	RPADIR_PADS = 0x1f0000, RPADIR_PADR = 0xffff,
+	RPADIR_PADS1 = 0x20000, RPADIR_PADS0 = 0x10000,
+	RPADIR_PADR = 0x0003f,
 };
 
 /* FDR */
@@ -487,6 +488,7 @@ struct sh_eth_cpu_data {
 	u32 ecsipr_value;
 	u32 fdr_value;
 	u32 fcftr_value;
+	u32 rpadir_value;
 
 	/* interrupt checking mask */
 	u32 tx_check;

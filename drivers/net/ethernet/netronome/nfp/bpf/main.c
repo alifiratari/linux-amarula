@@ -66,19 +66,26 @@ nfp_bpf_xdp_offload(struct nfp_app *app, struct nfp_net *nn,
 		    struct bpf_prog *prog, struct netlink_ext_ack *extack)
 {
 	bool running, xdp_running;
+	int ret;
 
 	if (!nfp_net_ebpf_capable(nn))
 		return -EINVAL;
 
 	running = nn->dp.ctrl & NFP_NET_CFG_CTRL_BPF;
-	xdp_running = running && nn->xdp_hw.prog;
+	xdp_running = running && nn->dp.bpf_offload_xdp;
 
 	if (!prog && !xdp_running)
 		return 0;
 	if (prog && running && !xdp_running)
 		return -EBUSY;
 
-	return nfp_net_bpf_offload(nn, prog, running, extack);
+	ret = nfp_net_bpf_offload(nn, prog, running, extack);
+	/* Stop offload if replace not possible */
+	if (ret && prog)
+		nfp_bpf_xdp_offload(app, nn, NULL, extack);
+
+	nn->dp.bpf_offload_xdp = prog && !ret;
+	return ret;
 }
 
 static const char *nfp_bpf_extra_cap(struct nfp_app *app, struct nfp_net *nn)
@@ -195,14 +202,11 @@ static int nfp_bpf_setup_tc_block(struct net_device *netdev,
 	if (f->binder_type != TCF_BLOCK_BINDER_TYPE_CLSACT_INGRESS)
 		return -EOPNOTSUPP;
 
-	if (tcf_block_shared(f->block))
-		return -EOPNOTSUPP;
-
 	switch (f->command) {
 	case TC_BLOCK_BIND:
 		return tcf_block_cb_register(f->block,
 					     nfp_bpf_setup_tc_block_cb,
-					     nn, nn, f->extack);
+					     nn, nn);
 	case TC_BLOCK_UNBIND:
 		tcf_block_cb_unregister(f->block,
 					nfp_bpf_setup_tc_block_cb,

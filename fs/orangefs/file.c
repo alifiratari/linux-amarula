@@ -528,19 +528,18 @@ static long orangefs_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 	return ret;
 }
 
-static vm_fault_t orangefs_fault(struct vm_fault *vmf)
+static int orangefs_fault(struct vm_fault *vmf)
 {
 	struct file *file = vmf->vma->vm_file;
-	int ret;
-
-	ret = orangefs_inode_getattr(file->f_mapping->host, 0, 1,
+	int rc;
+	rc = orangefs_inode_getattr(file->f_mapping->host, 0, 1,
 	    STATX_SIZE);
-	if (ret == -ESTALE)
-		ret = -EIO;
-	if (ret) {
-		gossip_err("%s: orangefs_inode_getattr failed, ret:%d:.\n",
-				__func__, ret);
-		return VM_FAULT_SIGBUS;
+	if (rc == -ESTALE)
+		rc = -EIO;
+	if (rc) {
+		gossip_err("%s: orangefs_inode_getattr failed, "
+		    "rc:%d:.\n", __func__, rc);
+		return rc;
 	}
 	return filemap_fault(vmf);
 }

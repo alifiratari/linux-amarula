@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// Renesas R-Car CMD support
-//
-// Copyright (C) 2015 Renesas Solutions Corp.
-// Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
-
+/*
+ * Renesas R-Car CMD support
+ *
+ * Copyright (C) 2015 Renesas Solutions Corp.
+ * Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 #include "rsnd.h"
 
 struct rsnd_cmd {
@@ -86,7 +89,7 @@ static int rsnd_cmd_init(struct rsnd_mod *mod,
 			cmd_case[rsnd_mod_id(src)] << 16;
 	}
 
-	dev_dbg(dev, "ctu/mix path = 0x%08x\n", data);
+	dev_dbg(dev, "ctu/mix path = 0x%08x", data);
 
 	rsnd_mod_write(mod, CMD_ROUTE_SLCT, data);
 	rsnd_mod_write(mod, CMD_BUSIF_MODE, rsnd_get_busif_shift(io, mod) | 1);

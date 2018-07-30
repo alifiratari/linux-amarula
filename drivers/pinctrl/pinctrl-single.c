@@ -747,44 +747,38 @@ static int pcs_allocate_pin_table(struct pcs_device *pcs)
 /**
  * pcs_add_function() - adds a new function to the function list
  * @pcs: pcs driver instance
- * @fcn: new function allocated
+ * @np: device node of the mux entry
  * @name: name of the function
  * @vals: array of mux register value pairs used by the function
  * @nvals: number of mux register value pairs
  * @pgnames: array of pingroup names for the function
  * @npgnames: number of pingroup names
- *
- * Caller must take care of locking.
  */
-static int pcs_add_function(struct pcs_device *pcs,
-			    struct pcs_function **fcn,
-			    const char *name,
-			    struct pcs_func_vals *vals,
-			    unsigned int nvals,
-			    const char **pgnames,
-			    unsigned int npgnames)
+static struct pcs_function *pcs_add_function(struct pcs_device *pcs,
+					struct device_node *np,
+					const char *name,
+					struct pcs_func_vals *vals,
+					unsigned nvals,
+					const char **pgnames,
+					unsigned npgnames)
 {
 	struct pcs_function *function;
-	int selector;
+	int res;
 
 	function = devm_kzalloc(pcs->dev, sizeof(*function), GFP_KERNEL);
 	if (!function)
-		return -ENOMEM;
+		return NULL;
 
 	function->vals = vals;
 	function->nvals = nvals;
 
-	selector = pinmux_generic_add_function(pcs->pctl, name,
-					       pgnames, npgnames,
-					       function);
-	if (selector < 0) {
-		devm_kfree(pcs->dev, function);
-		*fcn = NULL;
-	} else {
-		*fcn = function;
-	}
+	res = pinmux_generic_add_function(pcs->pctl, name,
+					  pgnames, npgnames,
+					  function);
+	if (res)
+		return NULL;
 
-	return selector;
+	return function;
 }
 
 /**
@@ -985,8 +979,8 @@ static int pcs_parse_one_pinctrl_entry(struct pcs_device *pcs,
 {
 	const char *name = "pinctrl-single,pins";
 	struct pcs_func_vals *vals;
-	int rows, *pins, found = 0, res = -ENOMEM, i, fsel, gsel;
-	struct pcs_function *function = NULL;
+	int rows, *pins, found = 0, res = -ENOMEM, i;
+	struct pcs_function *function;
 
 	rows = pinctrl_count_index_with_args(np, name);
 	if (rows <= 0) {
@@ -1036,25 +1030,21 @@ static int pcs_parse_one_pinctrl_entry(struct pcs_device *pcs,
 	}
 
 	pgnames[0] = np->name;
-	mutex_lock(&pcs->mutex);
-	fsel = pcs_add_function(pcs, &function, np->name, vals, found,
-				pgnames, 1);
-	if (fsel < 0) {
-		res = fsel;
+	function = pcs_add_function(pcs, np, np->name, vals, found, pgnames, 1);
+	if (!function) {
+		res = -ENOMEM;
 		goto free_pins;
 	}
 
-	gsel = pinctrl_generic_add_group(pcs->pctl, np->name, pins, found, pcs);
-	if (gsel < 0) {
-		res = gsel;
+	res = pinctrl_generic_add_group(pcs->pctl, np->name, pins, found, pcs);
+	if (res < 0)
 		goto free_function;
-	}
 
 	(*map)->type = PIN_MAP_TYPE_MUX_GROUP;
 	(*map)->data.mux.group = np->name;
 	(*map)->data.mux.function = np->name;
 
-	if (PCS_HAS_PINCONF && function) {
+	if (PCS_HAS_PINCONF) {
 		res = pcs_parse_pinconf(pcs, np, function, map);
 		if (res)
 			goto free_pingroups;
@@ -1062,17 +1052,15 @@ static int pcs_parse_one_pinctrl_entry(struct pcs_device *pcs,
 	} else {
 		*num_maps = 1;
 	}
-	mutex_unlock(&pcs->mutex);
-
 	return 0;
 
 free_pingroups:
-	pinctrl_generic_remove_group(pcs->pctl, gsel);
+	pinctrl_generic_remove_last_group(pcs->pctl);
 	*num_maps = 1;
 free_function:
-	pinmux_generic_remove_function(pcs->pctl, fsel);
+	pinmux_generic_remove_last_function(pcs->pctl);
+
 free_pins:
-	mutex_unlock(&pcs->mutex);
 	devm_kfree(pcs->dev, pins);
 
 free_vals:
@@ -1089,9 +1077,9 @@ static int pcs_parse_bits_in_pinctrl_entry(struct pcs_device *pcs,
 {
 	const char *name = "pinctrl-single,bits";
 	struct pcs_func_vals *vals;
-	int rows, *pins, found = 0, res = -ENOMEM, i, fsel, gsel;
+	int rows, *pins, found = 0, res = -ENOMEM, i;
 	int npins_in_row;
-	struct pcs_function *function = NULL;
+	struct pcs_function *function;
 
 	rows = pinctrl_count_index_with_args(np, name);
 	if (rows <= 0) {
@@ -1178,19 +1166,15 @@ static int pcs_parse_bits_in_pinctrl_entry(struct pcs_device *pcs,
 	}
 
 	pgnames[0] = np->name;
-	mutex_lock(&pcs->mutex);
-	fsel = pcs_add_function(pcs, &function, np->name, vals, found,
-				pgnames, 1);
-	if (fsel < 0) {
-		res = fsel;
+	function = pcs_add_function(pcs, np, np->name, vals, found, pgnames, 1);
+	if (!function) {
+		res = -ENOMEM;
 		goto free_pins;
 	}
 
-	gsel = pinctrl_generic_add_group(pcs->pctl, np->name, pins, found, pcs);
-	if (gsel < 0) {
-		res = gsel;
+	res = pinctrl_generic_add_group(pcs->pctl, np->name, pins, found, pcs);
+	if (res < 0)
 		goto free_function;
-	}
 
 	(*map)->type = PIN_MAP_TYPE_MUX_GROUP;
 	(*map)->data.mux.group = np->name;
@@ -1202,17 +1186,14 @@ static int pcs_parse_bits_in_pinctrl_entry(struct pcs_device *pcs,
 	}
 
 	*num_maps = 1;
-	mutex_unlock(&pcs->mutex);
-
 	return 0;
 
 free_pingroups:
-	pinctrl_generic_remove_group(pcs->pctl, gsel);
+	pinctrl_generic_remove_last_group(pcs->pctl);
 	*num_maps = 1;
 free_function:
-	pinmux_generic_remove_function(pcs->pctl, fsel);
+	pinmux_generic_remove_last_function(pcs->pctl);
 free_pins:
-	mutex_unlock(&pcs->mutex);
 	devm_kfree(pcs->dev, pins);
 
 free_vals:
@@ -1617,19 +1598,19 @@ static int pcs_save_context(struct pcs_device *pcs)
 
 	switch (pcs->width) {
 	case 64:
-		regsl = pcs->saved_vals;
-		for (i = 0; i < pcs->size; i += mux_bytes)
-			*regsl++ = pcs->read(pcs->base + i);
+		regsl = (u64 *)pcs->saved_vals;
+		for (i = 0; i < pcs->size / mux_bytes; i++)
+			regsl[i] = pcs->read(pcs->base + i * mux_bytes);
 		break;
 	case 32:
-		regsw = pcs->saved_vals;
-		for (i = 0; i < pcs->size; i += mux_bytes)
-			*regsw++ = pcs->read(pcs->base + i);
+		regsw = (u32 *)pcs->saved_vals;
+		for (i = 0; i < pcs->size / mux_bytes; i++)
+			regsw[i] = pcs->read(pcs->base + i * mux_bytes);
 		break;
 	case 16:
-		regshw = pcs->saved_vals;
-		for (i = 0; i < pcs->size; i += mux_bytes)
-			*regshw++ = pcs->read(pcs->base + i);
+		regshw = (u16 *)pcs->saved_vals;
+		for (i = 0; i < pcs->size / mux_bytes; i++)
+			regshw[i] = pcs->read(pcs->base + i * mux_bytes);
 		break;
 	}
 
@@ -1647,19 +1628,19 @@ static void pcs_restore_context(struct pcs_device *pcs)
 
 	switch (pcs->width) {
 	case 64:
-		regsl = pcs->saved_vals;
-		for (i = 0; i < pcs->size; i += mux_bytes)
-			pcs->write(*regsl++, pcs->base + i);
+		regsl = (u64 *)pcs->saved_vals;
+		for (i = 0; i < pcs->size / mux_bytes; i++)
+			pcs->write(regsl[i], pcs->base + i * mux_bytes);
 		break;
 	case 32:
-		regsw = pcs->saved_vals;
-		for (i = 0; i < pcs->size; i += mux_bytes)
-			pcs->write(*regsw++, pcs->base + i);
+		regsw = (u32 *)pcs->saved_vals;
+		for (i = 0; i < pcs->size / mux_bytes; i++)
+			pcs->write(regsw[i], pcs->base + i * mux_bytes);
 		break;
 	case 16:
-		regshw = pcs->saved_vals;
-		for (i = 0; i < pcs->size; i += mux_bytes)
-			pcs->write(*regshw++, pcs->base + i);
+		regshw = (u16 *)pcs->saved_vals;
+		for (i = 0; i < pcs->size / mux_bytes; i++)
+			pcs->write(regshw[i], pcs->base + i * mux_bytes);
 		break;
 	}
 }

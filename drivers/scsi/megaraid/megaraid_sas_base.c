@@ -120,7 +120,8 @@ static int megasas_register_aen(struct megasas_instance *instance,
 				u32 seq_num, u32 class_locale_word);
 static void megasas_get_pd_info(struct megasas_instance *instance,
 				struct scsi_device *sdev);
-
+static int megasas_get_target_prop(struct megasas_instance *instance,
+				   struct scsi_device *sdev);
 /*
  * PCI ID table for all supported controllers
  */
@@ -1793,8 +1794,7 @@ static struct megasas_instance *megasas_lookup_instance(u16 host_no)
 *
 * Returns void
 */
-void megasas_set_dynamic_target_properties(struct scsi_device *sdev,
-					   bool is_target_prop)
+void megasas_set_dynamic_target_properties(struct scsi_device *sdev)
 {
 	u16 pd_index = 0, ld;
 	u32 device_id;
@@ -1833,22 +1833,6 @@ void megasas_set_dynamic_target_properties(struct scsi_device *sdev,
 				[(instance->pd_seq_map_id - 1) & 1];
 		mr_device_priv_data->is_tm_capable =
 			pd_sync->seq[pd_index].capability.tmCapable;
-	}
-
-	if (is_target_prop && instance->tgt_prop->reset_tmo) {
-		/*
-		 * If FW provides a target reset timeout value, driver will use
-		 * it. If not set, fallback to default values.
-		 */
-		mr_device_priv_data->target_reset_tmo =
-			min_t(u8, instance->max_reset_tmo,
-			      instance->tgt_prop->reset_tmo);
-		mr_device_priv_data->task_abort_tmo = instance->task_abort_tmo;
-	} else {
-		mr_device_priv_data->target_reset_tmo =
-						MEGASAS_DEFAULT_TM_TIMEOUT;
-		mr_device_priv_data->task_abort_tmo =
-						MEGASAS_DEFAULT_TM_TIMEOUT;
 	}
 }
 
@@ -1983,10 +1967,10 @@ static int megasas_slave_configure(struct scsi_device *sdev)
 	is_target_prop = (ret_target_prop == DCMD_SUCCESS) ? true : false;
 	megasas_set_static_target_properties(sdev, is_target_prop);
 
-	/* This sdev property may change post OCR */
-	megasas_set_dynamic_target_properties(sdev, is_target_prop);
-
 	mutex_unlock(&instance->reset_mutex);
+
+	/* This sdev property may change post OCR */
+	megasas_set_dynamic_target_properties(sdev);
 
 	return 0;
 }
@@ -2834,7 +2818,7 @@ static int megasas_reset_bus_host(struct scsi_cmnd *scmd)
 		"SCSI command pointer: (%p)\t SCSI host state: %d\t"
 		" SCSI host busy: %d\t FW outstanding: %d\n",
 		scmd, scmd->device->host->shost_state,
-		scsi_host_busy(scmd->device->host),
+		atomic_read((atomic_t *)&scmd->device->host->host_busy),
 		atomic_read(&instance->fw_outstanding));
 
 	/*
@@ -4736,8 +4720,6 @@ megasas_get_ctrl_info(struct megasas_instance *instance)
 			ci->adapter_operations4.support_pd_map_target_id;
 		instance->support_nvme_passthru =
 			ci->adapter_operations4.support_nvme_passthru;
-		instance->task_abort_tmo = ci->TaskAbortTO;
-		instance->max_reset_tmo = ci->MaxResetTO;
 
 		/*Check whether controller is iMR or MR */
 		instance->is_imr = (ci->memory_size ? 0 : 1);
@@ -4756,10 +4738,6 @@ megasas_get_ctrl_info(struct megasas_instance *instance)
 			instance->secure_jbod_support ? "Yes" : "No");
 		dev_info(&instance->pdev->dev, "NVMe passthru support\t: %s\n",
 			 instance->support_nvme_passthru ? "Yes" : "No");
-		dev_info(&instance->pdev->dev,
-			 "FW provided TM TaskAbort/Reset timeout\t: %d secs/%d secs\n",
-			 instance->task_abort_tmo, instance->max_reset_tmo);
-
 		break;
 
 	case DCMD_TIMEOUT:
@@ -4777,15 +4755,14 @@ megasas_get_ctrl_info(struct megasas_instance *instance)
 				__func__, __LINE__);
 			break;
 		}
-		break;
 	case DCMD_FAILED:
 		megaraid_sas_kill_hba(instance);
 		break;
 
 	}
 
-	if (ret != DCMD_TIMEOUT)
-		megasas_return_cmd(instance, cmd);
+	megasas_return_cmd(instance, cmd);
+
 
 	return ret;
 }
@@ -5854,7 +5831,7 @@ megasas_register_aen(struct megasas_instance *instance, u32 seq_num,
  *
  * Returns 0 on success non-zero on failure.
  */
-int
+static int
 megasas_get_target_prop(struct megasas_instance *instance,
 			struct scsi_device *sdev)
 {
@@ -6812,9 +6789,6 @@ megasas_resume(struct pci_dev *pdev)
 			goto fail_init_mfi;
 	}
 
-	if (megasas_get_ctrl_info(instance) != DCMD_SUCCESS)
-		goto fail_init_mfi;
-
 	tasklet_init(&instance->isr_tasklet, instance->instancet->tasklet,
 		     (unsigned long)instance);
 
@@ -6868,12 +6842,12 @@ megasas_wait_for_adapter_operational(struct megasas_instance *instance)
 {
 	int wait_time = MEGASAS_RESET_WAIT_TIME * 2;
 	int i;
-	u8 adp_state;
+
+	if (atomic_read(&instance->adprecovery) == MEGASAS_HW_CRITICAL_ERROR)
+		return 1;
 
 	for (i = 0; i < wait_time; i++) {
-		adp_state = atomic_read(&instance->adprecovery);
-		if ((adp_state == MEGASAS_HBA_OPERATIONAL) ||
-		    (adp_state == MEGASAS_HW_CRITICAL_ERROR))
+		if (atomic_read(&instance->adprecovery)	== MEGASAS_HBA_OPERATIONAL)
 			break;
 
 		if (!(i % MEGASAS_RESET_NOTICE_INTERVAL))
@@ -6882,10 +6856,9 @@ megasas_wait_for_adapter_operational(struct megasas_instance *instance)
 		msleep(1000);
 	}
 
-	if (adp_state != MEGASAS_HBA_OPERATIONAL) {
-		dev_info(&instance->pdev->dev,
-			 "%s HBA failed to become operational, adp_state %d\n",
-			 __func__, adp_state);
+	if (atomic_read(&instance->adprecovery) != MEGASAS_HBA_OPERATIONAL) {
+		dev_info(&instance->pdev->dev, "%s timed out while waiting for HBA to recover.\n",
+			__func__);
 		return 1;
 	}
 

@@ -61,9 +61,9 @@ static int get_sb_mtd_set(struct super_block *sb, void *_mtd)
  * get a superblock on an MTD-backed filesystem
  */
 static struct dentry *mount_mtd_aux(struct file_system_type *fs_type, int flags,
-			  const char *dev_name, void *data, size_t data_size,
+			  const char *dev_name, void *data,
 			  struct mtd_info *mtd,
-			  int (*fill_super)(struct super_block *, void *, size_t, int))
+			  int (*fill_super)(struct super_block *, void *, int))
 {
 	struct super_block *sb;
 	int ret;
@@ -79,7 +79,7 @@ static struct dentry *mount_mtd_aux(struct file_system_type *fs_type, int flags,
 	pr_debug("MTDSB: New superblock for device %d (\"%s\")\n",
 	      mtd->index, mtd->name);
 
-	ret = fill_super(sb, data, data_size, flags & SB_SILENT ? 1 : 0);
+	ret = fill_super(sb, data, flags & SB_SILENT ? 1 : 0);
 	if (ret < 0) {
 		deactivate_locked_super(sb);
 		return ERR_PTR(ret);
@@ -105,10 +105,8 @@ out_error:
  * get a superblock on an MTD-backed filesystem by MTD device number
  */
 static struct dentry *mount_mtd_nr(struct file_system_type *fs_type, int flags,
-				   const char *dev_name,
-				   void *data, size_t data_size, int mtdnr,
-				   int (*fill_super)(struct super_block *, void *,
-						     size_t, int))
+			 const char *dev_name, void *data, int mtdnr,
+			 int (*fill_super)(struct super_block *, void *, int))
 {
 	struct mtd_info *mtd;
 
@@ -118,16 +116,15 @@ static struct dentry *mount_mtd_nr(struct file_system_type *fs_type, int flags,
 		return ERR_CAST(mtd);
 	}
 
-	return mount_mtd_aux(fs_type, flags, dev_name, data, data_size, mtd,
-			     fill_super);
+	return mount_mtd_aux(fs_type, flags, dev_name, data, mtd, fill_super);
 }
 
 /*
  * set up an MTD-based superblock
  */
 struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
-			 const char *dev_name, void *data, size_t data_size,
-			 int (*fill_super)(struct super_block *, void *, size_t, int))
+	       const char *dev_name, void *data,
+	       int (*fill_super)(struct super_block *, void *, int))
 {
 #ifdef CONFIG_BLOCK
 	struct block_device *bdev;
@@ -156,7 +153,7 @@ struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
 			if (!IS_ERR(mtd))
 				return mount_mtd_aux(
 					fs_type, flags,
-					dev_name, data, data_size, mtd,
+					dev_name, data, mtd,
 					fill_super);
 
 			printk(KERN_NOTICE "MTD:"
@@ -173,7 +170,7 @@ struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
 				pr_debug("MTDSB: mtd%%d, mtdnr %d\n",
 				      mtdnr);
 				return mount_mtd_nr(fs_type, flags,
-						    dev_name, data, data_size,
+						     dev_name, data,
 						     mtdnr, fill_super);
 			}
 		}
@@ -200,8 +197,7 @@ struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
 	if (major != MTD_BLOCK_MAJOR)
 		goto not_an_MTD_device;
 
-	return mount_mtd_nr(fs_type, flags, dev_name, data, data_size, mtdnr,
-			    fill_super);
+	return mount_mtd_nr(fs_type, flags, dev_name, data, mtdnr, fill_super);
 
 not_an_MTD_device:
 #endif /* CONFIG_BLOCK */

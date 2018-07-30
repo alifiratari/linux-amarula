@@ -193,11 +193,6 @@ struct i915_priolist {
 	int priority;
 };
 
-struct st_preempt_hang {
-	struct completion completion;
-	bool inject_hang;
-};
-
 /**
  * struct intel_engine_execlists - execlist submission queue and port state
  *
@@ -297,49 +292,32 @@ struct intel_engine_execlists {
 	/**
 	 * @queue: queue of requests, in priority lists
 	 */
-	struct rb_root_cached queue;
+	struct rb_root queue;
 
 	/**
-	 * @csb_read: control register for Context Switch buffer
-	 *
-	 * Note this register is always in mmio.
+	 * @first: leftmost level in priority @queue
 	 */
-	u32 __iomem *csb_read;
+	struct rb_node *first;
 
 	/**
-	 * @csb_write: control register for Context Switch buffer
-	 *
-	 * Note this register may be either mmio or HWSP shadow.
+	 * @fw_domains: forcewake domains for irq tasklet
 	 */
-	u32 *csb_write;
+	unsigned int fw_domains;
 
 	/**
-	 * @csb_status: status array for Context Switch buffer
-	 *
-	 * Note these register may be either mmio or HWSP shadow.
+	 * @csb_head: context status buffer head
 	 */
-	u32 *csb_status;
+	unsigned int csb_head;
+
+	/**
+	 * @csb_use_mmio: access csb through mmio, instead of hwsp
+	 */
+	bool csb_use_mmio;
 
 	/**
 	 * @preempt_complete_status: expected CSB upon completing preemption
 	 */
 	u32 preempt_complete_status;
-
-	/**
-	 * @csb_write_reset: reset value for CSB write pointer
-	 *
-	 * As the CSB write pointer maybe either in HWSP or as a field
-	 * inside an mmio register, we want to reprogram it slightly
-	 * differently to avoid later confusion.
-	 */
-	u32 csb_write_reset;
-
-	/**
-	 * @csb_head: context status buffer head
-	 */
-	u8 csb_head;
-
-	I915_SELFTEST_DECLARE(struct st_preempt_hang preempt_hang;)
 };
 
 #define INTEL_ENGINE_CS_MAX_NAME 8
@@ -367,8 +345,10 @@ struct intel_engine_cs {
 	struct drm_i915_gem_object *default_state;
 	void *pinned_default_state;
 
+	atomic_t irq_count;
 	unsigned long irq_posted;
 #define ENGINE_IRQ_BREADCRUMB 0
+#define ENGINE_IRQ_EXECLIST 1
 
 	/* Rather than have every client wait upon all user interrupts,
 	 * with the herd waking after every interrupt and each doing the
@@ -400,7 +380,6 @@ struct intel_engine_cs {
 
 		unsigned int hangcheck_interrupts;
 		unsigned int irq_enabled;
-		unsigned int irq_count;
 
 		bool irq_armed : 1;
 		I915_SELFTEST_DECLARE(bool mock : 1);
@@ -690,12 +669,6 @@ execlists_clear_active(struct intel_engine_execlists *execlists,
 	__clear_bit(bit, (unsigned long *)&execlists->active);
 }
 
-static inline void
-execlists_clear_all_active(struct intel_engine_execlists *execlists)
-{
-	execlists->active = 0;
-}
-
 static inline bool
 execlists_is_active(const struct intel_engine_execlists *execlists,
 		    unsigned int bit)
@@ -955,10 +928,11 @@ static inline u32 intel_hws_preempt_done_address(struct intel_engine_cs *engine)
 /* intel_breadcrumbs.c -- user interrupt bottom-half for waiters */
 int intel_engine_init_breadcrumbs(struct intel_engine_cs *engine);
 
-static inline void intel_wait_init(struct intel_wait *wait)
+static inline void intel_wait_init(struct intel_wait *wait,
+				   struct i915_request *rq)
 {
 	wait->tsk = current;
-	wait->request = NULL;
+	wait->request = rq;
 }
 
 static inline void intel_wait_init_for_seqno(struct intel_wait *wait, u32 seqno)
@@ -1161,25 +1135,5 @@ int intel_enable_engine_stats(struct intel_engine_cs *engine);
 void intel_disable_engine_stats(struct intel_engine_cs *engine);
 
 ktime_t intel_engine_get_busy_time(struct intel_engine_cs *engine);
-
-#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
-
-static inline bool inject_preempt_hang(struct intel_engine_execlists *execlists)
-{
-	if (!execlists->preempt_hang.inject_hang)
-		return false;
-
-	complete(&execlists->preempt_hang.completion);
-	return true;
-}
-
-#else
-
-static inline bool inject_preempt_hang(struct intel_engine_execlists *execlists)
-{
-	return false;
-}
-
-#endif
 
 #endif /* _INTEL_RINGBUFFER_H_ */

@@ -962,11 +962,8 @@ static int cx88_audio_initdev(struct pci_dev *pci,
 		goto error;
 
 	/* If there's a wm8775 then add a Line-In ALC switch */
-	if (core->sd_wm8775) {
-		err = snd_ctl_add(card, snd_ctl_new1(&snd_cx88_alc_switch, chip));
-		if (err < 0)
-			goto error;
-	}
+	if (core->sd_wm8775)
+		snd_ctl_add(card, snd_ctl_new1(&snd_cx88_alc_switch, chip));
 
 	strcpy(card->driver, "CX88x");
 	sprintf(card->shortname, "Conexant CX%x", pci->device);

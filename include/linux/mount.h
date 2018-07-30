@@ -21,7 +21,6 @@ struct super_block;
 struct vfsmount;
 struct dentry;
 struct mnt_namespace;
-struct fs_context;
 
 #define MNT_NOSUID	0x01
 #define MNT_NODEV	0x02
@@ -89,15 +88,12 @@ struct path;
 extern struct vfsmount *clone_private_mount(const struct path *path);
 
 struct file_system_type;
-extern struct vfsmount *vfs_create_mount(struct fs_context *fc,
-					 unsigned int mnt_flags);
 extern struct vfsmount *vfs_kern_mount(struct file_system_type *type,
 				      int flags, const char *name,
-				      void *data, size_t data_size);
+				      void *data);
 extern struct vfsmount *vfs_submount(const struct dentry *mountpoint,
 				     struct file_system_type *type,
-				     const char *name,
-				     void *data, size_t data_size);
+				     const char *name, void *data);
 
 extern void mnt_set_expiry(struct vfsmount *mnt, struct list_head *expiry_list);
 extern void mark_mounts_for_expiry(struct list_head *mounts);

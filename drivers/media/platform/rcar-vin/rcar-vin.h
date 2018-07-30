@@ -53,13 +53,11 @@ enum rvin_csi_id {
 
 /**
  * STOPPED  - No operation in progress
- * STARTING - Capture starting up
  * RUNNING  - Operation in progress have buffers
  * STOPPING - Stopping operation
  */
 enum rvin_dma_state {
 	STOPPED = 0,
-	STARTING,
 	RUNNING,
 	STOPPING,
 };
@@ -75,21 +73,15 @@ struct rvin_video_format {
 };
 
 /**
- * struct rvin_parallel_entity - Parallel video input endpoint descriptor
+ * struct rvin_graph_entity - Video endpoint from async framework
  * @asd:	sub-device descriptor for async framework
  * @subdev:	subdevice matched using async framework
- * @mbus_type:	media bus type
- * @mbus_flags:	media bus configuration flags
  * @source_pad:	source pad of remote subdevice
  * @sink_pad:	sink pad of remote subdevice
- *
  */
-struct rvin_parallel_entity {
+struct rvin_graph_entity {
 	struct v4l2_async_subdev asd;
 	struct v4l2_subdev *subdev;
-
-	enum v4l2_mbus_type mbus_type;
-	unsigned int mbus_flags;
 
 	unsigned int source_pad;
 	unsigned int sink_pad;
@@ -154,8 +146,7 @@ struct rvin_info {
  * @v4l2_dev:		V4L2 device
  * @ctrl_handler:	V4L2 control handler
  * @notifier:		V4L2 asynchronous subdevs notifier
- *
- * @parallel:		parallel input subdevice descriptor
+ * @digital:		entity in the DT for local digital subdevice
  *
  * @group:		Gen3 CSI group
  * @id:			Gen3 group id for this VIN
@@ -173,8 +164,7 @@ struct rvin_info {
  * @sequence:		V4L2 buffers sequence number
  * @state:		keeps track of operation state
  *
- * @is_csi:		flag to mark the VIN as using a CSI-2 subdevice
- *
+ * @mbus_cfg:		media bus configuration from DT
  * @mbus_code:		media bus format code
  * @format:		active V4L2 pixel format
  *
@@ -192,8 +182,7 @@ struct rvin_dev {
 	struct v4l2_device v4l2_dev;
 	struct v4l2_ctrl_handler ctrl_handler;
 	struct v4l2_async_notifier notifier;
-
-	struct rvin_parallel_entity *parallel;
+	struct rvin_graph_entity *digital;
 
 	struct rvin_group *group;
 	unsigned int id;
@@ -210,8 +199,7 @@ struct rvin_dev {
 	unsigned int sequence;
 	enum rvin_dma_state state;
 
-	bool is_csi;
-
+	struct v4l2_mbus_config mbus_cfg;
 	u32 mbus_code;
 	struct v4l2_pix_format format;
 
@@ -221,7 +209,7 @@ struct rvin_dev {
 	v4l2_std_id std;
 };
 
-#define vin_to_source(vin)		((vin)->parallel->subdev)
+#define vin_to_source(vin)		((vin)->digital->subdev)
 
 /* Debug */
 #define vin_dbg(d, fmt, arg...)		dev_dbg(d->dev, fmt, ##arg)
@@ -237,7 +225,8 @@ struct rvin_dev {
  *
  * @lock:		protects the count, notifier, vin and csi members
  * @count:		number of enabled VIN instances found in DT
- * @notifier:		group notifier for CSI-2 async subdevices
+ * @notifier:		pointer to the notifier of a VIN which handles the
+ *			groups async sub-devices.
  * @vin:		VIN instances which are part of the group
  * @csi:		array of pairs of fwnode and subdev pointers
  *			to all CSI-2 subdevices.
@@ -249,7 +238,7 @@ struct rvin_group {
 
 	struct mutex lock;
 	unsigned int count;
-	struct v4l2_async_notifier notifier;
+	struct v4l2_async_notifier *notifier;
 	struct rvin_dev *vin[RCAR_VIN_NUM];
 
 	struct {

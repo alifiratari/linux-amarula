@@ -395,15 +395,20 @@ static int msm_iommu_add_device(struct device *dev)
 	struct msm_iommu_dev *iommu;
 	struct iommu_group *group;
 	unsigned long flags;
+	int ret = 0;
 
 	spin_lock_irqsave(&msm_iommu_lock, flags);
-	iommu = find_iommu_for_dev(dev);
-	spin_unlock_irqrestore(&msm_iommu_lock, flags);
 
+	iommu = find_iommu_for_dev(dev);
 	if (iommu)
 		iommu_device_link(&iommu->iommu, dev);
 	else
-		return -ENODEV;
+		ret = -ENODEV;
+
+	spin_unlock_irqrestore(&msm_iommu_lock, flags);
+
+	if (ret)
+		return ret;
 
 	group = iommu_group_get_for_dev(dev);
 	if (IS_ERR(group))
@@ -420,11 +425,12 @@ static void msm_iommu_remove_device(struct device *dev)
 	unsigned long flags;
 
 	spin_lock_irqsave(&msm_iommu_lock, flags);
-	iommu = find_iommu_for_dev(dev);
-	spin_unlock_irqrestore(&msm_iommu_lock, flags);
 
+	iommu = find_iommu_for_dev(dev);
 	if (iommu)
 		iommu_device_unlink(&iommu->iommu, dev);
+
+	spin_unlock_irqrestore(&msm_iommu_lock, flags);
 
 	iommu_group_remove_device(dev);
 }
@@ -870,6 +876,8 @@ static void __exit msm_iommu_driver_exit(void)
 
 subsys_initcall(msm_iommu_driver_init);
 module_exit(msm_iommu_driver_exit);
+
+IOMMU_OF_DECLARE(msm_iommu_of, "qcom,apq8064-iommu");
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Stepan Moskovchenko <stepanm@codeaurora.org>");

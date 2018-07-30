@@ -1228,13 +1228,11 @@ static int gfs2_statfs(struct dentry *dentry, struct kstatfs *buf)
  * @sb:  the filesystem
  * @flags:  the remount flags
  * @data:  extra data passed in (not used right now)
- * @data_size: size of the extra data
  *
  * Returns: errno
  */
 
-static int gfs2_remount_fs(struct super_block *sb, int *flags,
-			   char *data, size_t data_size)
+static int gfs2_remount_fs(struct super_block *sb, int *flags, char *data)
 {
 	struct gfs2_sbd *sdp = sb->s_fs_info;
 	struct gfs2_args args = sdp->sd_args; /* Default to current settings */
@@ -1731,6 +1729,7 @@ static struct inode *gfs2_alloc_inode(struct super_block *sb)
 	if (ip) {
 		ip->i_flags = 0;
 		ip->i_gl = NULL;
+		ip->i_rgd = NULL;
 		memset(&ip->i_res, 0, sizeof(ip->i_res));
 		RB_CLEAR_NODE(&ip->i_res.rs_node);
 		ip->i_rahead = 0;

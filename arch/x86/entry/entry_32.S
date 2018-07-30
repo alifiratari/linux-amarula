@@ -46,8 +46,6 @@
 #include <asm/frame.h>
 #include <asm/nospec-branch.h>
 
-#include "calling.h"
-
 	.section .entry.text, "ax"
 
 /*
@@ -300,7 +298,6 @@ ENTRY(ret_from_fork)
 	/* When we fork, we trace the syscall return in the child, too. */
 	movl    %esp, %eax
 	call    syscall_return_slowpath
-	STACKLEAK_ERASE
 	jmp     restore_all
 
 	/* kernel thread */
@@ -461,8 +458,6 @@ ENTRY(entry_SYSENTER_32)
 	ALTERNATIVE "testl %eax, %eax; jz .Lsyscall_32_done", \
 		    "jmp .Lsyscall_32_done", X86_FEATURE_XENPV
 
-	STACKLEAK_ERASE
-
 /* Opportunistic SYSEXIT */
 	TRACE_IRQS_ON			/* User mode traces as IRQs on. */
 	movl	PT_EIP(%esp), %edx	/* pt_regs->ip */
@@ -548,8 +543,6 @@ ENTRY(entry_INT80_32)
 	movl	%esp, %eax
 	call	do_int80_syscall_32
 .Lsyscall_32_done:
-
-	STACKLEAK_ERASE
 
 restore_all:
 	TRACE_IRQS_IRET

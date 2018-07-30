@@ -817,7 +817,8 @@ ssize_t tcp_splice_read(struct socket *sock, loff_t *ppos,
 				 * This occurs when user tries to read
 				 * from never connected socket.
 				 */
-				ret = -ENOTCONN;
+				if (!sock_flag(sk, SOCK_DONE))
+					ret = -ENOTCONN;
 				break;
 			}
 			if (!timeo) {
@@ -1240,7 +1241,7 @@ int tcp_sendmsg_locked(struct sock *sk, struct msghdr *msg, size_t size)
 		/* 'common' sending to sendq */
 	}
 
-	sockcm_init(&sockc, sk);
+	sockc.tsflags = sk->sk_tsflags;
 	if (msg->msg_controllen) {
 		err = sock_cmsg_send(sk, msg, &sockc);
 		if (unlikely(err)) {
@@ -1274,6 +1275,9 @@ restart:
 			int linear;
 
 new_segment:
+			/* Allocate new segment. If the interface is SG,
+			 * allocate skb fitting to single page.
+			 */
 			if (!sk_stream_memory_free(sk))
 				goto wait_for_sndbuf;
 
@@ -2038,10 +2042,13 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 				break;
 
 			if (sk->sk_state == TCP_CLOSE) {
-				/* This occurs when user tries to read
-				 * from never connected socket.
-				 */
-				copied = -ENOTCONN;
+				if (!sock_flag(sk, SOCK_DONE)) {
+					/* This occurs when user tries to read
+					 * from never connected socket.
+					 */
+					copied = -ENOTCONN;
+					break;
+				}
 				break;
 			}
 
@@ -2555,8 +2562,6 @@ int tcp_disconnect(struct sock *sk, int flags)
 
 	tcp_clear_xmit_timers(sk);
 	__skb_queue_purge(&sk->sk_receive_queue);
-	tp->copied_seq = tp->rcv_nxt;
-	tp->urg_data = 0;
 	tcp_write_queue_purge(sk);
 	tcp_fastopen_active_disable_ofo_check(sk);
 	skb_rbtree_purge(&tp->out_of_order_queue);
@@ -2569,7 +2574,6 @@ int tcp_disconnect(struct sock *sk, int flags)
 	sk->sk_shutdown = 0;
 	sock_reset_flag(sk, SOCK_DONE);
 	tp->srtt_us = 0;
-	tp->rcv_rtt_last_tsecr = 0;
 	tp->write_seq += tp->max_window + 2;
 	if (tp->write_seq == 0)
 		tp->write_seq = 1;
@@ -2817,17 +2821,14 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 	case TCP_REPAIR:
 		if (!tcp_can_repair_sock(sk))
 			err = -EPERM;
-		else if (val == TCP_REPAIR_ON) {
+		else if (val == 1) {
 			tp->repair = 1;
 			sk->sk_reuse = SK_FORCE_REUSE;
 			tp->repair_queue = TCP_NO_QUEUE;
-		} else if (val == TCP_REPAIR_OFF) {
+		} else if (val == 0) {
 			tp->repair = 0;
 			sk->sk_reuse = SK_NO_REUSE;
 			tcp_send_window_probe(sk);
-		} else if (val == TCP_REPAIR_OFF_NO_WP) {
-			tp->repair = 0;
-			sk->sk_reuse = SK_NO_REUSE;
 		} else
 			err = -EINVAL;
 
@@ -3719,7 +3720,8 @@ int tcp_abort(struct sock *sk, int err)
 			struct request_sock *req = inet_reqsk(sk);
 
 			local_bh_disable();
-			inet_csk_reqsk_queue_drop(req->rsk_listener, req);
+			inet_csk_reqsk_queue_drop_and_put(req->rsk_listener,
+							  req);
 			local_bh_enable();
 			return 0;
 		}

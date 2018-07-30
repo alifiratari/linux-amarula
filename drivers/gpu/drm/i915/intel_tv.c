@@ -1347,7 +1347,8 @@ intel_tv_get_modes(struct drm_connector *connector)
 		mode_ptr = drm_mode_create(connector->dev);
 		if (!mode_ptr)
 			continue;
-		strlcpy(mode_ptr->name, input->name, DRM_DISPLAY_MODE_LEN);
+		strncpy(mode_ptr->name, input->name, DRM_DISPLAY_MODE_LEN);
+		mode_ptr->name[DRM_DISPLAY_MODE_LEN - 1] = '\0';
 
 		mode_ptr->hdisplay = hactive_s;
 		mode_ptr->hsync_start = hactive_s + 1;

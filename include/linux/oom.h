@@ -10,13 +10,6 @@
 #include <linux/sched/coredump.h> /* MMF_* */
 #include <linux/mm.h> /* VM_FAULT* */
 
-
-/*
- * Special value returned by victim selection functions to indicate
- * that are inflight OOM victims.
- */
-#define INFLIGHT_VICTIM ((void *)-1UL)
-
 struct zonelist;
 struct notifier_block;
 struct mem_cgroup;
@@ -47,8 +40,7 @@ struct oom_control {
 
 	/* Used by oom implementation, do not set */
 	unsigned long totalpages;
-	struct task_struct *chosen_task;
-	struct mem_cgroup *chosen_memcg;
+	struct task_struct *chosen;
 	unsigned long chosen_points;
 };
 
@@ -120,8 +112,6 @@ extern bool oom_killer_disable(signed long timeout);
 extern void oom_killer_enable(void);
 
 extern struct task_struct *find_lock_task_mm(struct task_struct *p);
-
-extern int oom_evaluate_task(struct task_struct *task, void *arg);
 
 /* sysctls */
 extern int sysctl_oom_dump_tasks;

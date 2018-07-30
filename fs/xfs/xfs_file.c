@@ -735,6 +735,7 @@ xfs_wait_dax_page(
 static int
 xfs_break_dax_layouts(
 	struct inode		*inode,
+	uint			iolock,
 	bool			*did_unlock)
 {
 	struct page		*page;
@@ -765,7 +766,7 @@ xfs_break_layouts(
 		retry = false;
 		switch (reason) {
 		case BREAK_UNMAP:
-			error = xfs_break_dax_layouts(inode, &retry);
+			error = xfs_break_dax_layouts(inode, *iolock, &retry);
 			if (error || retry)
 				break;
 			/* fall through */
@@ -932,16 +933,31 @@ xfs_file_clone_range(
 				     len, false);
 }
 
-STATIC int
+STATIC ssize_t
 xfs_file_dedupe_range(
-	struct file	*file_in,
-	loff_t		pos_in,
-	struct file	*file_out,
-	loff_t		pos_out,
-	u64		len)
+	struct file	*src_file,
+	u64		loff,
+	u64		len,
+	struct file	*dst_file,
+	u64		dst_loff)
 {
-	return xfs_reflink_remap_range(file_in, pos_in, file_out, pos_out,
+	struct inode	*srci = file_inode(src_file);
+	u64		max_dedupe;
+	int		error;
+
+	/*
+	 * Since we have to read all these pages in to compare them, cut
+	 * it off at MAX_RW_COUNT/2 rounded down to the nearest block.
+	 * That means we won't do more than MAX_RW_COUNT IO per request.
+	 */
+	max_dedupe = (MAX_RW_COUNT >> 1) & ~(i_blocksize(srci) - 1);
+	if (len > max_dedupe)
+		len = max_dedupe;
+	error = xfs_reflink_remap_range(src_file, loff, dst_file, dst_loff,
 				     len, true);
+	if (error)
+		return error;
+	return len;
 }
 
 STATIC int
@@ -1155,7 +1171,7 @@ xfs_file_mmap(
 	file_accessed(filp);
 	vma->vm_ops = &xfs_file_vm_ops;
 	if (IS_DAX(file_inode(filp)))
-		vma->vm_flags |= VM_HUGEPAGE;
+		vma->vm_flags |= VM_MIXEDMAP | VM_HUGEPAGE;
 	return 0;
 }
 

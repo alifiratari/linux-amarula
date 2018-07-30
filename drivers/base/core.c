@@ -178,10 +178,10 @@ void device_pm_move_to_tail(struct device *dev)
  * of the link.  If DL_FLAG_PM_RUNTIME is not set, DL_FLAG_RPM_ACTIVE will be
  * ignored.
  *
- * If the DL_FLAG_AUTOREMOVE_CONSUMER is set, the link will be removed
- * automatically when the consumer device driver unbinds from it.
- * The combination of both DL_FLAG_AUTOREMOVE_CONSUMER and DL_FLAG_STATELESS
- * set is invalid and will cause NULL to be returned.
+ * If the DL_FLAG_AUTOREMOVE is set, the link will be removed automatically
+ * when the consumer device driver unbinds from it.  The combination of both
+ * DL_FLAG_AUTOREMOVE and DL_FLAG_STATELESS set is invalid and will cause NULL
+ * to be returned.
  *
  * A side effect of the link creation is re-ordering of dpm_list and the
  * devices_kset list by moving the consumer device and all devices depending
@@ -198,8 +198,7 @@ struct device_link *device_link_add(struct device *consumer,
 	struct device_link *link;
 
 	if (!consumer || !supplier ||
-	    ((flags & DL_FLAG_STATELESS) &&
-	     (flags & DL_FLAG_AUTOREMOVE_CONSUMER)))
+	    ((flags & DL_FLAG_STATELESS) && (flags & DL_FLAG_AUTOREMOVE)))
 		return NULL;
 
 	device_links_write_lock();
@@ -373,36 +372,6 @@ void device_link_del(struct device_link *link)
 }
 EXPORT_SYMBOL_GPL(device_link_del);
 
-/**
- * device_link_remove - remove a link between two devices.
- * @consumer: Consumer end of the link.
- * @supplier: Supplier end of the link.
- *
- * The caller must ensure proper synchronization of this function with runtime
- * PM.
- */
-void device_link_remove(void *consumer, struct device *supplier)
-{
-	struct device_link *link;
-
-	if (WARN_ON(consumer == supplier))
-		return;
-
-	device_links_write_lock();
-	device_pm_lock();
-
-	list_for_each_entry(link, &supplier->links.consumers, s_node) {
-		if (link->consumer == consumer) {
-			kref_put(&link->kref, __device_link_del);
-			break;
-		}
-	}
-
-	device_pm_unlock();
-	device_links_write_unlock();
-}
-EXPORT_SYMBOL_GPL(device_link_remove);
-
 static void device_links_missing_supplier(struct device *dev)
 {
 	struct device_link *link;
@@ -510,7 +479,7 @@ static void __device_links_no_driver(struct device *dev)
 		if (link->flags & DL_FLAG_STATELESS)
 			continue;
 
-		if (link->flags & DL_FLAG_AUTOREMOVE_CONSUMER)
+		if (link->flags & DL_FLAG_AUTOREMOVE)
 			kref_put(&link->kref, __device_link_del);
 		else if (link->status != DL_STATE_SUPPLIER_UNBIND)
 			WRITE_ONCE(link->status, DL_STATE_AVAILABLE);
@@ -546,18 +515,8 @@ void device_links_driver_cleanup(struct device *dev)
 		if (link->flags & DL_FLAG_STATELESS)
 			continue;
 
-		WARN_ON(link->flags & DL_FLAG_AUTOREMOVE_CONSUMER);
+		WARN_ON(link->flags & DL_FLAG_AUTOREMOVE);
 		WARN_ON(link->status != DL_STATE_SUPPLIER_UNBIND);
-
-		/*
-		 * autoremove the links between this @dev and its consumer
-		 * devices that are not active, i.e. where the link state
-		 * has moved to DL_STATE_SUPPLIER_UNBIND.
-		 */
-		if (link->status == DL_STATE_SUPPLIER_UNBIND &&
-		    link->flags & DL_FLAG_AUTOREMOVE_SUPPLIER)
-			kref_put(&link->kref, __device_link_del);
-
 		WRITE_ONCE(link->status, DL_STATE_DORMANT);
 	}
 
@@ -1638,8 +1597,6 @@ static void cleanup_glue_dir(struct device *dev, struct kobject *glue_dir)
 		return;
 
 	mutex_lock(&gdp_mutex);
-	if (!kobject_has_children(glue_dir))
-		kobject_del(glue_dir);
 	kobject_put(glue_dir);
 	mutex_unlock(&gdp_mutex);
 }
@@ -1779,7 +1736,7 @@ static void device_remove_sys_dev_entry(struct device *dev)
 	}
 }
 
-static int device_private_init(struct device *dev)
+int device_private_init(struct device *dev)
 {
 	dev->p = kzalloc(sizeof(*dev->p), GFP_KERNEL);
 	if (!dev->p)
@@ -3045,12 +3002,12 @@ void func(const struct device *dev, const char *fmt, ...)	\
 }								\
 EXPORT_SYMBOL(func);
 
-define_dev_printk_level(_dev_emerg, KERN_EMERG);
-define_dev_printk_level(_dev_alert, KERN_ALERT);
-define_dev_printk_level(_dev_crit, KERN_CRIT);
-define_dev_printk_level(_dev_err, KERN_ERR);
-define_dev_printk_level(_dev_warn, KERN_WARNING);
-define_dev_printk_level(_dev_notice, KERN_NOTICE);
+define_dev_printk_level(dev_emerg, KERN_EMERG);
+define_dev_printk_level(dev_alert, KERN_ALERT);
+define_dev_printk_level(dev_crit, KERN_CRIT);
+define_dev_printk_level(dev_err, KERN_ERR);
+define_dev_printk_level(dev_warn, KERN_WARNING);
+define_dev_printk_level(dev_notice, KERN_NOTICE);
 define_dev_printk_level(_dev_info, KERN_INFO);
 
 #endif

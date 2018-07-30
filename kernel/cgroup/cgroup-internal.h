@@ -8,59 +8,6 @@
 #include <linux/list.h>
 #include <linux/refcount.h>
 
-#define TRACE_CGROUP_PATH_LEN 1024
-extern spinlock_t trace_cgroup_path_lock;
-extern char trace_cgroup_path[TRACE_CGROUP_PATH_LEN];
-
-/*
- * cgroup_path() takes a spin lock. It is good practice not to take
- * spin locks within trace point handlers, as they are mostly hidden
- * from normal view. As cgroup_path() can take the kernfs_rename_lock
- * spin lock, it is best to not call that function from the trace event
- * handler.
- *
- * Note: trace_cgroup_##type##_enabled() is a static branch that will only
- *       be set when the trace event is enabled.
- */
-#define TRACE_CGROUP_PATH(type, cgrp, ...)				\
-	do {								\
-		if (trace_cgroup_##type##_enabled()) {			\
-			spin_lock(&trace_cgroup_path_lock);		\
-			cgroup_path(cgrp, trace_cgroup_path,		\
-				    TRACE_CGROUP_PATH_LEN);		\
-			trace_cgroup_##type(cgrp, trace_cgroup_path,	\
-					    ##__VA_ARGS__);		\
-			spin_unlock(&trace_cgroup_path_lock);		\
-		}							\
-	} while (0)
-
-/*
- * The cgroup filesystem superblock creation/mount context.
- */
-struct cgroup_fs_context {
-	struct kernfs_fs_context kfc;
-	struct cgroup_root	*root;
-	struct cgroup_namespace	*ns;
-	u8		version;		/* cgroups version */
-	unsigned int	flags;			/* CGRP_ROOT_* flags */
-
-	/* cgroup1 bits */
-	bool		cpuset_clone_children;
-	bool		none;			/* User explicitly requested empty subsystem */
-	bool		all_ss;			/* Seen 'all' option */
-	bool		one_ss;			/* Seen 'none' option */
-	u16		subsys_mask;		/* Selected subsystems */
-	char		*name;			/* Hierarchy name */
-	char		*release_agent;		/* Path for release notifications */
-};
-
-static inline struct cgroup_fs_context *cgroup_fc2context(struct fs_context *fc)
-{
-	struct kernfs_fs_context *kfc = fc->fs_private;
-
-	return container_of(kfc, struct cgroup_fs_context, kfc);
-}
-
 /*
  * A cgroup can be associated with multiple css_sets as different tasks may
  * belong to different cgroups on different hierarchies.  In the other
@@ -142,6 +89,16 @@ struct cgroup_mgctx {
 #define DEFINE_CGROUP_MGCTX(name)						\
 	struct cgroup_mgctx name = CGROUP_MGCTX_INIT(name)
 
+struct cgroup_sb_opts {
+	u16 subsys_mask;
+	unsigned int flags;
+	char *release_agent;
+	bool cpuset_clone_children;
+	char *name;
+	/* User explicitly requested empty subsystem */
+	bool none;
+};
+
 extern struct mutex cgroup_mutex;
 extern spinlock_t css_set_lock;
 extern struct cgroup_subsys *cgroup_subsys[];
@@ -212,10 +169,12 @@ int cgroup_path_ns_locked(struct cgroup *cgrp, char *buf, size_t buflen,
 			  struct cgroup_namespace *ns);
 
 void cgroup_free_root(struct cgroup_root *root);
-void init_cgroup_root(struct cgroup_fs_context *ctx);
+void init_cgroup_root(struct cgroup_root *root, struct cgroup_sb_opts *opts);
 int cgroup_setup_root(struct cgroup_root *root, u16 ss_mask, int ref_flags);
 int rebind_subsystems(struct cgroup_root *dst_root, u16 ss_mask);
-int cgroup_do_get_tree(struct fs_context *fc);
+struct dentry *cgroup_do_mount(struct file_system_type *fs_type, int flags,
+			       struct cgroup_root *root, unsigned long magic,
+			       struct cgroup_namespace *ns);
 
 int cgroup_migrate_vet_dst(struct cgroup *dst_cgrp);
 void cgroup_migrate_finish(struct cgroup_mgctx *mgctx);
@@ -265,8 +224,8 @@ bool cgroup1_ssid_disabled(int ssid);
 void cgroup1_pidlist_destroy_all(struct cgroup *cgrp);
 void cgroup1_release_agent(struct work_struct *work);
 void cgroup1_check_for_release(struct cgroup *cgrp);
-int cgroup1_parse_option(struct fs_context *fc, char *p);
-int cgroup1_validate(struct fs_context *fc);
-int cgroup1_get_tree(struct fs_context *fc);
+struct dentry *cgroup1_mount(struct file_system_type *fs_type, int flags,
+			     void *data, unsigned long magic,
+			     struct cgroup_namespace *ns);
 
 #endif /* __CGROUP_INTERNAL_H */

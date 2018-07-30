@@ -5,13 +5,6 @@
 The drm/amdgpu driver supports all AMD Radeon GPUs based on the Graphics Core
 Next (GCN) architecture.
 
-Module Parameters
-=================
-
-The amdgpu driver supports the following module parameters:
-
-.. kernel-doc:: drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
-
 Core Driver Infrastructure
 ==========================
 
@@ -122,8 +115,3 @@ pp_power_profile_mode
 .. kernel-doc:: drivers/gpu/drm/amd/amdgpu/amdgpu_pm.c
    :doc: pp_power_profile_mode
 
-busy_percent
-~~~~~~~~~~~~
-
-.. kernel-doc:: drivers/gpu/drm/amd/amdgpu/amdgpu_pm.c
-   :doc: busy_percent

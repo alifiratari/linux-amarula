@@ -2175,13 +2175,15 @@ static void fcoe_ctlr_disc_stop_locked(struct fc_lport *lport)
 {
 	struct fc_rport_priv *rdata;
 
-	mutex_lock(&lport->disc.disc_mutex);
+	rcu_read_lock();
 	list_for_each_entry_rcu(rdata, &lport->disc.rports, peers) {
 		if (kref_get_unless_zero(&rdata->kref)) {
 			fc_rport_logoff(rdata);
 			kref_put(&rdata->kref, fc_rport_destroy);
 		}
 	}
+	rcu_read_unlock();
+	mutex_lock(&lport->disc.disc_mutex);
 	lport->disc.disc_callback = NULL;
 	mutex_unlock(&lport->disc.disc_mutex);
 }
@@ -2710,7 +2712,7 @@ static unsigned long fcoe_ctlr_vn_age(struct fcoe_ctlr *fip)
 	unsigned long deadline;
 
 	next_time = jiffies + msecs_to_jiffies(FIP_VN_BEACON_INT * 10);
-	mutex_lock(&lport->disc.disc_mutex);
+	rcu_read_lock();
 	list_for_each_entry_rcu(rdata, &lport->disc.rports, peers) {
 		if (!kref_get_unless_zero(&rdata->kref))
 			continue;
@@ -2731,7 +2733,7 @@ static unsigned long fcoe_ctlr_vn_age(struct fcoe_ctlr *fip)
 			next_time = deadline;
 		kref_put(&rdata->kref, fc_rport_destroy);
 	}
-	mutex_unlock(&lport->disc.disc_mutex);
+	rcu_read_unlock();
 	return next_time;
 }
 
@@ -3078,6 +3080,8 @@ static void fcoe_ctlr_vn_disc(struct fcoe_ctlr *fip)
 	mutex_lock(&disc->disc_mutex);
 	callback = disc->pending ? disc->disc_callback : NULL;
 	disc->pending = 0;
+	mutex_unlock(&disc->disc_mutex);
+	rcu_read_lock();
 	list_for_each_entry_rcu(rdata, &disc->rports, peers) {
 		if (!kref_get_unless_zero(&rdata->kref))
 			continue;
@@ -3086,7 +3090,7 @@ static void fcoe_ctlr_vn_disc(struct fcoe_ctlr *fip)
 			fc_rport_login(rdata);
 		kref_put(&rdata->kref, fc_rport_destroy);
 	}
-	mutex_unlock(&disc->disc_mutex);
+	rcu_read_unlock();
 	if (callback)
 		callback(lport, DISC_EV_SUCCESS);
 }

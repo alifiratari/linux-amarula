@@ -55,8 +55,6 @@
 
 #define I2S_SP_INSTANCE                 0x01
 #define I2S_BT_INSTANCE                 0x02
-#define CAP_CHANNEL0			0x00
-#define CAP_CHANNEL1			0x01
 
 #define ACP_TILE_ON_MASK                0x03
 #define ACP_TILE_OFF_MASK               0x02
@@ -74,16 +72,16 @@
 #define ACP_TO_I2S_DMA_CH_NUM 13
 
 /* Capture DMA channels */
-#define I2S_TO_ACP_DMA_CH_NUM 14
-#define ACP_TO_SYSRAM_CH_NUM 15
+#define ACP_TO_SYSRAM_CH_NUM 14
+#define I2S_TO_ACP_DMA_CH_NUM 15
 
 /* Playback DMA Channels for I2S BT instance */
 #define SYSRAM_TO_ACP_BT_INSTANCE_CH_NUM  8
 #define ACP_TO_I2S_DMA_BT_INSTANCE_CH_NUM 9
 
 /* Capture DMA Channels for I2S BT Instance */
-#define I2S_TO_ACP_DMA_BT_INSTANCE_CH_NUM 10
-#define ACP_TO_SYSRAM_BT_INSTANCE_CH_NUM 11
+#define ACP_TO_SYSRAM_BT_INSTANCE_CH_NUM 10
+#define I2S_TO_ACP_DMA_BT_INSTANCE_CH_NUM 11
 
 #define NUM_DSCRS_PER_CHANNEL 2
 
@@ -127,7 +125,6 @@ struct audio_substream_data {
 	unsigned int order;
 	u16 num_of_pages;
 	u16 i2s_instance;
-	u16 capture_channel;
 	u16 direction;
 	u16 ch1;
 	u16 ch2;
@@ -158,7 +155,6 @@ struct audio_drv_data {
  */
 struct acp_platform_info {
 	u16 i2s_instance;
-	u16 capture_channel;
 };
 
 union acp_dma_count {

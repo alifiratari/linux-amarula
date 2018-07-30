@@ -87,10 +87,10 @@ enum {
 enum { UDF_MAX_LINKS = 0xffff };
 
 /* These are the "meat" - everything else is stuffing */
-static int udf_fill_super(struct super_block *, void *, size_t, int);
+static int udf_fill_super(struct super_block *, void *, int);
 static void udf_put_super(struct super_block *);
 static int udf_sync_fs(struct super_block *, int);
-static int udf_remount_fs(struct super_block *, int *, char *, size_t);
+static int udf_remount_fs(struct super_block *, int *, char *);
 static void udf_load_logicalvolint(struct super_block *, struct kernel_extent_ad);
 static int udf_find_fileset(struct super_block *, struct kernel_lb_addr *,
 			    struct kernel_lb_addr *);
@@ -126,11 +126,9 @@ struct logicalVolIntegrityDescImpUse *udf_sb_lvidiu(struct super_block *sb)
 
 /* UDF filesystem type */
 static struct dentry *udf_mount(struct file_system_type *fs_type,
-				int flags, const char *dev_name,
-				void *data, size_t data_size)
+		      int flags, const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  udf_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, udf_fill_super);
 }
 
 static struct file_system_type udf_fstype = {
@@ -610,8 +608,7 @@ static int udf_parse_options(char *options, struct udf_options *uopt,
 	return 1;
 }
 
-static int udf_remount_fs(struct super_block *sb, int *flags,
-			  char *options, size_t data_size)
+static int udf_remount_fs(struct super_block *sb, int *flags, char *options)
 {
 	struct udf_options uopt;
 	struct udf_sb_info *sbi = UDF_SB(sb);
@@ -1983,7 +1980,7 @@ static void udf_open_lvid(struct super_block *sb)
 	struct buffer_head *bh = sbi->s_lvid_bh;
 	struct logicalVolIntegrityDesc *lvid;
 	struct logicalVolIntegrityDescImpUse *lvidiu;
-	struct timespec64 ts;
+	struct timespec ts;
 
 	if (!bh)
 		return;
@@ -1995,7 +1992,7 @@ static void udf_open_lvid(struct super_block *sb)
 	mutex_lock(&sbi->s_alloc_mutex);
 	lvidiu->impIdent.identSuffix[0] = UDF_OS_CLASS_UNIX;
 	lvidiu->impIdent.identSuffix[1] = UDF_OS_ID_LINUX;
-	ktime_get_real_ts64(&ts);
+	ktime_get_real_ts(&ts);
 	udf_time_to_disk_stamp(&lvid->recordingDateAndTime, ts);
 	if (le32_to_cpu(lvid->integrityType) == LVID_INTEGRITY_TYPE_CLOSE)
 		lvid->integrityType = cpu_to_le32(LVID_INTEGRITY_TYPE_OPEN);
@@ -2020,7 +2017,7 @@ static void udf_close_lvid(struct super_block *sb)
 	struct buffer_head *bh = sbi->s_lvid_bh;
 	struct logicalVolIntegrityDesc *lvid;
 	struct logicalVolIntegrityDescImpUse *lvidiu;
-	struct timespec64 ts;
+	struct timespec ts;
 
 	if (!bh)
 		return;
@@ -2032,7 +2029,7 @@ static void udf_close_lvid(struct super_block *sb)
 	mutex_lock(&sbi->s_alloc_mutex);
 	lvidiu->impIdent.identSuffix[0] = UDF_OS_CLASS_UNIX;
 	lvidiu->impIdent.identSuffix[1] = UDF_OS_ID_LINUX;
-	ktime_get_real_ts64(&ts);
+	ktime_get_real_ts(&ts);
 	udf_time_to_disk_stamp(&lvid->recordingDateAndTime, ts);
 	if (UDF_MAX_WRITE_VERSION > le16_to_cpu(lvidiu->maxUDFWriteRev))
 		lvidiu->maxUDFWriteRev = cpu_to_le16(UDF_MAX_WRITE_VERSION);
@@ -2088,8 +2085,7 @@ u64 lvid_get_unique_id(struct super_block *sb)
 	return ret;
 }
 
-static int udf_fill_super(struct super_block *sb,
-			  void *options, size_t data_size, int silent)
+static int udf_fill_super(struct super_block *sb, void *options, int silent)
 {
 	int ret = -EINVAL;
 	struct inode *inode = NULL;

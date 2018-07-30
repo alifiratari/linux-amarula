@@ -1248,7 +1248,7 @@ static void nfp6000_free(struct nfp_cpp *cpp)
 	kfree(nfp);
 }
 
-static int nfp6000_read_serial(struct device *dev, u8 *serial)
+static void nfp6000_read_serial(struct device *dev, u8 *serial)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
 	int pos;
@@ -1256,29 +1256,25 @@ static int nfp6000_read_serial(struct device *dev, u8 *serial)
 
 	pos = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_DSN);
 	if (!pos) {
-		dev_err(dev, "can't find PCIe Serial Number Capability\n");
-		return -EINVAL;
+		memset(serial, 0, NFP_SERIAL_LEN);
+		return;
 	}
 
 	pci_read_config_dword(pdev, pos + 4, &reg);
 	put_unaligned_be16(reg >> 16, serial + 4);
 	pci_read_config_dword(pdev, pos + 8, &reg);
 	put_unaligned_be32(reg, serial);
-
-	return 0;
 }
 
-static int nfp6000_get_interface(struct device *dev)
+static u16 nfp6000_get_interface(struct device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
 	int pos;
 	u32 reg;
 
 	pos = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_DSN);
-	if (!pos) {
-		dev_err(dev, "can't find PCIe Serial Number Capability\n");
-		return -EINVAL;
-	}
+	if (!pos)
+		return NFP_CPP_INTERFACE(NFP_CPP_INTERFACE_TYPE_PCI, 0, 0xff);
 
 	pci_read_config_dword(pdev, pos + 4, &reg);
 

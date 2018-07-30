@@ -210,7 +210,7 @@ static int parse_options(struct super_block *sb, char *options)
 	return 0;
 }
 
-static int adfs_remount(struct super_block *sb, int *flags, char *data, size_t data_size)
+static int adfs_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
 	*flags |= SB_NODIRATIME;
@@ -362,8 +362,7 @@ static inline unsigned long adfs_discsize(struct adfs_discrecord *dr, int block_
 	return discsize;
 }
 
-static int adfs_fill_super(struct super_block *sb, void *data, size_t data_size,
-			   int silent)
+static int adfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct adfs_discrecord *dr;
 	struct buffer_head *bh;
@@ -523,9 +522,9 @@ error:
 }
 
 static struct dentry *adfs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size, adfs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, adfs_fill_super);
 }
 
 static struct file_system_type adfs_fs_type = {

@@ -657,18 +657,21 @@ static ssize_t store_energy_performance_preference(
 {
 	struct cpudata *cpu_data = all_cpu_data[policy->cpu];
 	char str_preference[21];
-	int ret;
+	int ret, i = 0;
 
 	ret = sscanf(buf, "%20s", str_preference);
 	if (ret != 1)
 		return -EINVAL;
 
-	ret = match_string(energy_perf_strings, -1, str_preference);
-	if (ret < 0)
-		return ret;
+	while (energy_perf_strings[i] != NULL) {
+		if (!strcmp(str_preference, energy_perf_strings[i])) {
+			intel_pstate_set_energy_pref_index(cpu_data, i);
+			return count;
+		}
+		++i;
+	}
 
-	intel_pstate_set_energy_pref_index(cpu_data, ret);
-	return count;
+	return -EINVAL;
 }
 
 static ssize_t show_energy_performance_preference(

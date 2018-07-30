@@ -9,7 +9,6 @@
  *
  */
 
-#include <linux/compiler.h>
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -1322,7 +1321,7 @@ static inline void capinc_tty_exit(void) { }
  * /proc/capi/capi20:
  *  minor applid nrecvctlpkt nrecvdatapkt nsendctlpkt nsenddatapkt
  */
-static int __maybe_unused capi20_proc_show(struct seq_file *m, void *v)
+static int capi20_proc_show(struct seq_file *m, void *v)
 {
 	struct capidev *cdev;
 	struct list_head *l;
@@ -1345,7 +1344,7 @@ static int __maybe_unused capi20_proc_show(struct seq_file *m, void *v)
  * /proc/capi/capi20ncci:
  *  applid ncci
  */
-static int __maybe_unused capi20ncci_proc_show(struct seq_file *m, void *v)
+static int capi20ncci_proc_show(struct seq_file *m, void *v)
 {
 	struct capidev *cdev;
 	struct capincci *np;

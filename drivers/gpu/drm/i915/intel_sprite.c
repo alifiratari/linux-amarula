@@ -41,20 +41,6 @@
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
 
-bool intel_format_is_yuv(u32 format)
-{
-	switch (format) {
-	case DRM_FORMAT_YUYV:
-	case DRM_FORMAT_UYVY:
-	case DRM_FORMAT_VYUY:
-	case DRM_FORMAT_YVYU:
-	case DRM_FORMAT_NV12:
-		return true;
-	default:
-		return false;
-	}
-}
-
 int intel_usecs_to_scanlines(const struct drm_display_mode *adjusted_mode,
 			     int usecs)
 {
@@ -107,21 +93,13 @@ void intel_pipe_update_start(const struct intel_crtc_state *new_crtc_state)
 						      VBLANK_EVASION_TIME_US);
 	max = vblank_start - 1;
 
+	local_irq_disable();
+
 	if (min <= 0 || max <= 0)
-		goto irq_disable;
+		return;
 
 	if (WARN_ON(drm_crtc_vblank_get(&crtc->base)))
-		goto irq_disable;
-
-	/*
-	 * Wait for psr to idle out after enabling the VBL interrupts
-	 * VBL interrupts will start the PSR exit and prevent a PSR
-	 * re-entry as well.
-	 */
-	if (intel_psr_wait_for_idle(new_crtc_state))
-		DRM_ERROR("PSR idle timed out, atomic update may fail\n");
-
-	local_irq_disable();
+		return;
 
 	crtc->debug.min_vbl = min;
 	crtc->debug.max_vbl = max;
@@ -179,10 +157,6 @@ void intel_pipe_update_start(const struct intel_crtc_state *new_crtc_state)
 	crtc->debug.start_vbl_count = intel_crtc_get_vblank_counter(crtc);
 
 	trace_i915_pipe_update_vblank_evaded(crtc);
-	return;
-
-irq_disable:
-	local_irq_disable();
 }
 
 /**
@@ -416,7 +390,7 @@ chv_update_csc(const struct intel_plane_state *plane_state)
 	const s16 *csc = csc_matrix[plane_state->base.color_encoding];
 
 	/* Seems RGB data bypasses the CSC always */
-	if (!intel_format_is_yuv(fb->format->format))
+	if (!fb->format->is_yuv)
 		return;
 
 	I915_WRITE_FW(SPCSCYGOFF(plane_id), SPCSC_OOFF(0) | SPCSC_IOFF(0));
@@ -451,7 +425,7 @@ vlv_update_clrc(const struct intel_plane_state *plane_state)
 	enum plane_id plane_id = plane->id;
 	int contrast, brightness, sh_scale, sh_sin, sh_cos;
 
-	if (intel_format_is_yuv(fb->format->format) &&
+	if (fb->format->is_yuv &&
 	    plane_state->base.color_range == DRM_COLOR_YCBCR_LIMITED_RANGE) {
 		/*
 		 * Expand limited range to full range:
@@ -1052,7 +1026,7 @@ intel_check_sprite_plane(struct intel_plane *plane,
 		src->y1 = src_y << 16;
 		src->y2 = (src_y + src_h) << 16;
 
-		if (intel_format_is_yuv(fb->format->format) &&
+		if (fb->format->is_yuv &&
     		    fb->format->format != DRM_FORMAT_NV12 &&
 		    (src_x % 2 || src_w % 2)) {
 			DRM_DEBUG_KMS("src x/w (%u, %u) must be a multiple of 2 for YUV planes\n",

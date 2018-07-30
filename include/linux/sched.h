@@ -25,7 +25,6 @@
 #include <linux/latencytop.h>
 #include <linux/sched/prio.h>
 #include <linux/signal_types.h>
-#include <linux/psi_types.h>
 #include <linux/mm_types_task.h>
 #include <linux/task_io_accounting.h>
 #include <linux/rseq.h>
@@ -119,7 +118,7 @@ struct task_group;
  * the comment with set_special_state().
  */
 #define is_special_task_state(state)				\
-	((state) & (__TASK_STOPPED | __TASK_TRACED | TASK_PARKED | TASK_DEAD))
+	((state) & (__TASK_STOPPED | __TASK_TRACED | TASK_DEAD))
 
 #define __set_current_state(state_value)			\
 	do {							\
@@ -168,8 +167,8 @@ struct task_group;
  *   need_sleep = false;
  *   wake_up_state(p, TASK_UNINTERRUPTIBLE);
  *
- * where wake_up_state() executes a full memory barrier before accessing the
- * task state.
+ * Where wake_up_state() (and all other wakeup primitives) imply enough
+ * barriers to order the store of the variable against wakeup.
  *
  * Wakeup will do: if (@state & p->state) p->state = TASK_RUNNING, that is,
  * once it observes the TASK_UNINTERRUPTIBLE store the waking CPU can issue a
@@ -711,10 +710,6 @@ struct task_struct {
 	unsigned			sched_contributes_to_load:1;
 	unsigned			sched_migrated:1;
 	unsigned			sched_remote_wakeup:1;
-#ifdef CONFIG_PSI
-	unsigned			sched_psi_wake_requeue:1;
-#endif
-
 	/* Force alignment to the next boundary: */
 	unsigned			:0;
 
@@ -727,8 +722,8 @@ struct task_struct {
 	unsigned			restore_sigmask:1;
 #endif
 #ifdef CONFIG_MEMCG
-	unsigned			in_user_fault:1;
-#ifdef CONFIG_MEMCG_KMEM
+	unsigned			memcg_may_oom:1;
+#ifndef CONFIG_SLOB
 	unsigned			memcg_kmem_skip_account:1;
 #endif
 #endif
@@ -738,10 +733,6 @@ struct task_struct {
 #ifdef CONFIG_CGROUPS
 	/* disallow userland-initiated cgroup migration */
 	unsigned			no_cgroup_migration:1;
-#endif
-#ifdef CONFIG_BLK_CGROUP
-	/* to be used once the psi infrastructure lands upstream. */
-	unsigned			use_memdelay:1;
 #endif
 
 	unsigned long			atomic_flags; /* Flags requiring atomic access. */
@@ -858,7 +849,6 @@ struct task_struct {
 #endif
 #ifdef CONFIG_DETECT_HUNG_TASK
 	unsigned long			last_switch_count;
-	unsigned long			last_switch_time;
 #endif
 	/* Filesystem information: */
 	struct fs_struct		*fs;
@@ -967,10 +957,6 @@ struct task_struct {
 	siginfo_t			*last_siginfo;
 
 	struct task_io_accounting	ioac;
-#ifdef CONFIG_PSI
-	/* Pressure stall state */
-	unsigned int			psi_flags;
-#endif
 #ifdef CONFIG_TASK_XACCT
 	/* Accumulated RSS usage: */
 	u64				acct_rss_mem1;
@@ -1163,13 +1149,6 @@ struct task_struct {
 
 	/* Number of pages to reclaim on returning to userland: */
 	unsigned int			memcg_nr_pages_over_high;
-
-	/* Used by memcontrol for targeted memcg charge: */
-	struct mem_cgroup		*active_memcg;
-#endif
-
-#ifdef CONFIG_BLK_CGROUP
-	struct request_queue		*throttle_queue;
 #endif
 
 #ifdef CONFIG_UPROBES
@@ -1184,8 +1163,7 @@ struct task_struct {
 #endif
 	int				pagefault_disabled;
 #ifdef CONFIG_MMU
-	/* OOM victim queue for oom reaper, protected by oom_reaper_lock */
-	struct list_head		oom_reap_list;
+	struct task_struct		*oom_reaper_list;
 #endif
 #ifdef CONFIG_VMAP_STACK
 	struct vm_struct		*stack_vm_area;
@@ -1200,11 +1178,6 @@ struct task_struct {
 #ifdef CONFIG_SECURITY
 	/* Used by LSM modules for access restriction: */
 	void				*security;
-#endif
-
-#ifdef CONFIG_GCC_PLUGIN_STACKLEAK
-	unsigned long			lowest_stack;
-	unsigned long			prev_lowest_stack;
 #endif
 
 	/*
@@ -1424,7 +1397,6 @@ extern struct pid *cad_pid;
 #define PF_KTHREAD		0x00200000	/* I am a kernel thread */
 #define PF_RANDOMIZE		0x00400000	/* Randomize virtual address space */
 #define PF_SWAPWRITE		0x00800000	/* Allowed to write to swap */
-#define PF_MEMSTALL		0x01000000	/* Stalled due to lack of memory */
 #define PF_NO_SETAFFINITY	0x04000000	/* Userland is not allowed to meddle with cpus_allowed */
 #define PF_MCE_EARLY		0x08000000      /* Early kill for mce process policy */
 #define PF_MUTEX_TESTER		0x20000000	/* Thread belongs to the rt mutex tester */

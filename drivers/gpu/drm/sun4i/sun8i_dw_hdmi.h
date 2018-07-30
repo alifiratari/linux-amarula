@@ -9,7 +9,9 @@
 #include <drm/bridge/dw_hdmi.h>
 #include <drm/drm_encoder.h>
 #include <linux/clk.h>
+#include <linux/of_gpio.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 #include <linux/reset.h>
 
 #define SUN8I_HDMI_PHY_DBG_CTRL_REG	0x0000
@@ -149,6 +151,10 @@ struct sun8i_hdmi_phy;
 struct sun8i_hdmi_phy_variant {
 	bool has_phy_clk;
 	bool has_second_pll;
+	bool is_custom_phy;
+	const struct dw_hdmi_curr_ctrl *cur_ctr;
+	const struct dw_hdmi_mpll_config *mpll_cfg;
+	const struct dw_hdmi_phy_config *phy_cfg;
 	void (*phy_init)(struct sun8i_hdmi_phy *phy);
 	void (*phy_disable)(struct dw_hdmi *hdmi,
 			    struct sun8i_hdmi_phy *phy);
@@ -166,7 +172,14 @@ struct sun8i_hdmi_phy {
 	unsigned int			rcal;
 	struct regmap			*regs;
 	struct reset_control		*rst_phy;
+	struct gpio_desc		*gpiod_ddc_en;
 	struct sun8i_hdmi_phy_variant	*variant;
+};
+
+struct sun8i_dw_hdmi_quirks {
+	enum drm_mode_status (*mode_valid)(struct drm_connector *connector,
+					   const struct drm_display_mode *mode);
+	bool set_rate;
 };
 
 struct sun8i_dw_hdmi {
@@ -176,6 +189,8 @@ struct sun8i_dw_hdmi {
 	struct drm_encoder		encoder;
 	struct sun8i_hdmi_phy		*phy;
 	struct dw_hdmi_plat_data	plat_data;
+	const struct sun8i_dw_hdmi_quirks *quirks;
+	struct regulator		*regulator;
 	struct reset_control		*rst_ctrl;
 };
 
@@ -189,7 +204,8 @@ int sun8i_hdmi_phy_probe(struct sun8i_dw_hdmi *hdmi, struct device_node *node);
 void sun8i_hdmi_phy_remove(struct sun8i_dw_hdmi *hdmi);
 
 void sun8i_hdmi_phy_init(struct sun8i_hdmi_phy *phy);
-const struct dw_hdmi_phy_ops *sun8i_hdmi_phy_get_ops(void);
+void sun8i_hdmi_phy_set_ops(struct sun8i_hdmi_phy *phy,
+			    struct dw_hdmi_plat_data *plat_data);
 
 int sun8i_phy_clk_create(struct sun8i_hdmi_phy *phy, struct device *dev,
 			 bool second_parent);

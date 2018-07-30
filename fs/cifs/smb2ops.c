@@ -203,7 +203,6 @@ smb2_find_mid(struct TCP_Server_Info *server, char *buf)
 		if ((mid->mid == wire_mid) &&
 		    (mid->mid_state == MID_REQUEST_SUBMITTED) &&
 		    (mid->command == shdr->Command)) {
-			kref_get(&mid->refcount);
 			spin_unlock(&GlobalMid_Lock);
 			return mid;
 		}
@@ -444,11 +443,7 @@ SMB3_request_interfaces(const unsigned int xid, struct cifs_tcon *tcon)
 			FSCTL_QUERY_NETWORK_INTERFACE_INFO, true /* is_fsctl */,
 			NULL /* no data input */, 0 /* no data input */,
 			(char **)&out_buf, &ret_data_len);
-	if (rc == -EOPNOTSUPP) {
-		cifs_dbg(FYI,
-			 "server does not support query network interfaces\n");
-		goto out;
-	} else if (rc != 0) {
+	if (rc != 0) {
 		cifs_dbg(VFS, "error %d on ioctl to get interface list\n", rc);
 		goto out;
 	}
@@ -552,8 +547,6 @@ smb3_qfs_tcon(const unsigned int xid, struct cifs_tcon *tcon)
 			FS_ATTRIBUTE_INFORMATION);
 	SMB2_QFS_attr(xid, tcon, fid.persistent_fid, fid.volatile_fid,
 			FS_DEVICE_INFORMATION);
-	SMB2_QFS_attr(xid, tcon, fid.persistent_fid, fid.volatile_fid,
-			FS_VOLUME_INFORMATION);
 	SMB2_QFS_attr(xid, tcon, fid.persistent_fid, fid.volatile_fid,
 			FS_SECTOR_SIZE_INFORMATION); /* SMB3 specific */
 	if (no_cached_open)
@@ -862,8 +855,6 @@ smb2_set_ea(const unsigned int xid, struct cifs_tcon *tcon,
 
 	rc = SMB2_set_ea(xid, tcon, fid.persistent_fid, fid.volatile_fid, ea,
 			 len);
-	kfree(ea);
-
 	SMB2_close(xid, tcon, fid.persistent_fid, fid.volatile_fid);
 
 	return rc;
@@ -1537,37 +1528,6 @@ smb2_queryfs(const unsigned int xid, struct cifs_tcon *tcon,
 	return rc;
 }
 
-static int
-smb311_queryfs(const unsigned int xid, struct cifs_tcon *tcon,
-	     struct kstatfs *buf)
-{
-	int rc;
-	__le16 srch_path = 0; /* Null - open root of share */
-	u8 oplock = SMB2_OPLOCK_LEVEL_NONE;
-	struct cifs_open_parms oparms;
-	struct cifs_fid fid;
-
-	if (!tcon->posix_extensions)
-		return smb2_queryfs(xid, tcon, buf);
-
-	oparms.tcon = tcon;
-	oparms.desired_access = FILE_READ_ATTRIBUTES;
-	oparms.disposition = FILE_OPEN;
-	oparms.create_options = 0;
-	oparms.fid = &fid;
-	oparms.reconnect = false;
-
-	rc = SMB2_open(xid, &oparms, &srch_path, &oplock, NULL, NULL, NULL);
-	if (rc)
-		return rc;
-
-	rc = SMB311_posix_qfs_info(xid, tcon, fid.persistent_fid,
-				   fid.volatile_fid, buf);
-	buf->f_type = SMB2_MAGIC_NUMBER;
-	SMB2_close(xid, tcon, fid.persistent_fid, fid.volatile_fid);
-	return rc;
-}
-
 static bool
 smb2_compare_fids(struct cifsFileInfo *ob1, struct cifsFileInfo *ob2)
 {
@@ -1737,7 +1697,7 @@ smb2_query_symlink(const unsigned int xid, struct cifs_tcon *tcon,
 		       &resp_buftype);
 	if (!rc || !err_iov.iov_base) {
 		rc = -ENOENT;
-		goto free_path;
+		goto querty_exit;
 	}
 
 	err_buf = err_iov.iov_base;
@@ -1778,7 +1738,6 @@ smb2_query_symlink(const unsigned int xid, struct cifs_tcon *tcon,
 
  querty_exit:
 	free_rsp_buf(resp_buftype, err_buf);
- free_path:
 	kfree(utf16_path);
 	return rc;
 }
@@ -2260,7 +2219,8 @@ smb2_create_lease_buf(u8 *lease_key, u8 oplock)
 	if (!buf)
 		return NULL;
 
-	memcpy(&buf->lcontext.LeaseKey, lease_key, SMB2_LEASE_KEY_SIZE);
+	buf->lcontext.LeaseKeyLow = cpu_to_le64(*((u64 *)lease_key));
+	buf->lcontext.LeaseKeyHigh = cpu_to_le64(*((u64 *)(lease_key + 8)));
 	buf->lcontext.LeaseState = map_oplock_to_lease(oplock);
 
 	buf->ccontext.DataOffset = cpu_to_le16(offsetof
@@ -2286,7 +2246,8 @@ smb3_create_lease_buf(u8 *lease_key, u8 oplock)
 	if (!buf)
 		return NULL;
 
-	memcpy(&buf->lcontext.LeaseKey, lease_key, SMB2_LEASE_KEY_SIZE);
+	buf->lcontext.LeaseKeyLow = cpu_to_le64(*((u64 *)lease_key));
+	buf->lcontext.LeaseKeyHigh = cpu_to_le64(*((u64 *)(lease_key + 8)));
 	buf->lcontext.LeaseState = map_oplock_to_lease(oplock);
 
 	buf->ccontext.DataOffset = cpu_to_le16(offsetof
@@ -2323,7 +2284,8 @@ smb3_parse_lease_buf(void *buf, unsigned int *epoch, char *lease_key)
 	if (lc->lcontext.LeaseFlags & SMB2_LEASE_FLAG_BREAK_IN_PROGRESS)
 		return SMB2_OPLOCK_LEVEL_NOCHANGE;
 	if (lease_key)
-		memcpy(lease_key, &lc->lcontext.LeaseKey, SMB2_LEASE_KEY_SIZE);
+		memcpy(lease_key, &lc->lcontext.LeaseKeyLow,
+		       SMB2_LEASE_KEY_SIZE);
 	return le32_to_cpu(lc->lcontext.LeaseState);
 }
 
@@ -2559,7 +2521,7 @@ smb3_init_transform_rq(struct TCP_Server_Info *server, struct smb_rqst *new_rq,
 	if (!tr_hdr)
 		goto err_free_iov;
 
-	orig_len = smb_rqst_len(server, old_rq);
+	orig_len = smb2_rqst_len(old_rq, false);
 
 	/* fill the 2nd iov with a transform header */
 	fill_transform_hdr(tr_hdr, orig_len, old_rq);
@@ -3305,6 +3267,7 @@ struct smb_version_operations smb30_operations = {
 	.next_header = smb2_next_header,
 };
 
+#ifdef CONFIG_CIFS_SMB311
 struct smb_version_operations smb311_operations = {
 	.compare_fids = smb2_compare_fids,
 	.setup_request = smb2_setup_request,
@@ -3372,7 +3335,7 @@ struct smb_version_operations smb311_operations = {
 	.is_status_pending = smb2_is_status_pending,
 	.is_session_expired = smb2_is_session_expired,
 	.oplock_response = smb2_oplock_response,
-	.queryfs = smb311_queryfs,
+	.queryfs = smb2_queryfs,
 	.mand_lock = smb2_mand_lock,
 	.mand_unlock_range = smb2_unlock_range,
 	.push_mand_locks = smb2_push_mandatory_locks,
@@ -3405,6 +3368,7 @@ struct smb_version_operations smb311_operations = {
 #endif /* CIFS_XATTR */
 	.next_header = smb2_next_header,
 };
+#endif /* CIFS_SMB311 */
 
 struct smb_version_values smb20_values = {
 	.version_string = SMB20_VERSION_STRING,
@@ -3532,6 +3496,7 @@ struct smb_version_values smb302_values = {
 	.create_lease_size = sizeof(struct create_lease_v2),
 };
 
+#ifdef CONFIG_CIFS_SMB311
 struct smb_version_values smb311_values = {
 	.version_string = SMB311_VERSION_STRING,
 	.protocol_id = SMB311_PROT_ID,
@@ -3552,3 +3517,4 @@ struct smb_version_values smb311_values = {
 	.signing_required = SMB2_NEGOTIATE_SIGNING_REQUIRED,
 	.create_lease_size = sizeof(struct create_lease_v2),
 };
+#endif /* SMB311 */

@@ -52,7 +52,6 @@ hostprogs-y += xdp_adjust_tail
 hostprogs-y += xdpsock
 hostprogs-y += xdp_fwd
 hostprogs-y += task_fd_query
-hostprogs-y += xdp_sample_pkts
 
 # Libbpf dependencies
 LIBBPF = $(TOOLS_PATH)/lib/bpf/libbpf.a
@@ -108,7 +107,6 @@ xdp_adjust_tail-objs := xdp_adjust_tail_user.o
 xdpsock-objs := bpf_load.o xdpsock_user.o
 xdp_fwd-objs := bpf_load.o xdp_fwd_user.o
 task_fd_query-objs := bpf_load.o task_fd_query_user.o $(TRACE_HELPERS)
-xdp_sample_pkts-objs := xdp_sample_pkts_user.o $(TRACE_HELPERS)
 
 # Tell kbuild to always build the programs
 always := $(hostprogs-y)
@@ -165,13 +163,12 @@ always += xdp_adjust_tail_kern.o
 always += xdpsock_kern.o
 always += xdp_fwd_kern.o
 always += task_fd_query_kern.o
-always += xdp_sample_pkts_kern.o
 
-KBUILD_HOSTCFLAGS += -I$(objtree)/usr/include
-KBUILD_HOSTCFLAGS += -I$(srctree)/tools/lib/
-KBUILD_HOSTCFLAGS += -I$(srctree)/tools/testing/selftests/bpf/
-KBUILD_HOSTCFLAGS += -I$(srctree)/tools/lib/ -I$(srctree)/tools/include
-KBUILD_HOSTCFLAGS += -I$(srctree)/tools/perf
+HOSTCFLAGS += -I$(objtree)/usr/include
+HOSTCFLAGS += -I$(srctree)/tools/lib/
+HOSTCFLAGS += -I$(srctree)/tools/testing/selftests/bpf/
+HOSTCFLAGS += -I$(srctree)/tools/lib/ -I$(srctree)/tools/include
+HOSTCFLAGS += -I$(srctree)/tools/perf
 
 HOSTCFLAGS_bpf_load.o += -I$(objtree)/usr/include -Wno-unused-variable
 HOSTCFLAGS_trace_helpers.o += -I$(srctree)/tools/lib/bpf/
@@ -182,14 +179,13 @@ HOSTCFLAGS_spintest_user.o += -I$(srctree)/tools/lib/bpf/
 HOSTCFLAGS_trace_event_user.o += -I$(srctree)/tools/lib/bpf/
 HOSTCFLAGS_sampleip_user.o += -I$(srctree)/tools/lib/bpf/
 HOSTCFLAGS_task_fd_query_user.o += -I$(srctree)/tools/lib/bpf/
-HOSTCFLAGS_xdp_sample_pkts_user.o += -I$(srctree)/tools/lib/bpf/
 
-KBUILD_HOSTLDLIBS		+= $(LIBBPF) -lelf
-HOSTLDLIBS_tracex4		+= -lrt
-HOSTLDLIBS_trace_output	+= -lrt
-HOSTLDLIBS_map_perf_test	+= -lrt
-HOSTLDLIBS_test_overhead	+= -lrt
-HOSTLDLIBS_xdpsock		+= -pthread
+HOST_LOADLIBES		+= $(LIBBPF) -lelf
+HOSTLOADLIBES_tracex4		+= -lrt
+HOSTLOADLIBES_trace_output	+= -lrt
+HOSTLOADLIBES_map_perf_test	+= -lrt
+HOSTLOADLIBES_test_overhead	+= -lrt
+HOSTLOADLIBES_xdpsock		+= -pthread
 
 # Allows pointing LLC/CLANG to a LLVM backend with bpf support, redefine on cmdline:
 #  make samples/bpf/ LLC=~/git/llvm/build/bin/llc CLANG=~/git/llvm/build/bin/clang

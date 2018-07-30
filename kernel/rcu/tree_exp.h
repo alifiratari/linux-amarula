@@ -212,7 +212,7 @@ static void __rcu_report_exp_rnp(struct rcu_state *rsp, struct rcu_node *rnp,
 			raw_spin_unlock_irqrestore_rcu_node(rnp, flags);
 			if (wake) {
 				smp_mb(); /* EGP done before wake_up(). */
-				swake_up_one(&rsp->expedited_wq);
+				swake_up(&rsp->expedited_wq);
 			}
 			break;
 		}
@@ -472,7 +472,6 @@ retry_ipi:
 static void sync_rcu_exp_select_cpus(struct rcu_state *rsp,
 				     smp_call_func_t func)
 {
-	int cpu;
 	struct rcu_node *rnp;
 
 	trace_rcu_exp_grace_period(rsp->name, rcu_exp_gp_seq_endval(rsp), TPS("reset"));
@@ -487,20 +486,13 @@ static void sync_rcu_exp_select_cpus(struct rcu_state *rsp,
 		rnp->rew.rew_func = func;
 		rnp->rew.rew_rsp = rsp;
 		if (!READ_ONCE(rcu_par_gp_wq) ||
-		    rcu_scheduler_active != RCU_SCHEDULER_RUNNING ||
-		    rcu_is_last_leaf_node(rsp, rnp)) {
-			/* No workqueues yet or last leaf, do direct call. */
+		    rcu_scheduler_active != RCU_SCHEDULER_RUNNING) {
+			/* No workqueues yet. */
 			sync_rcu_exp_select_node_cpus(&rnp->rew.rew_work);
 			continue;
 		}
 		INIT_WORK(&rnp->rew.rew_work, sync_rcu_exp_select_node_cpus);
-		preempt_disable();
-		cpu = cpumask_next(rnp->grplo - 1, cpu_online_mask);
-		/* If all offline, queue the work on an unbound CPU. */
-		if (unlikely(cpu > rnp->grphi))
-			cpu = WORK_CPU_UNBOUND;
-		queue_work_on(cpu, rcu_par_gp_wq, &rnp->rew.rew_work);
-		preempt_enable();
+		queue_work_on(rnp->grplo, rcu_par_gp_wq, &rnp->rew.rew_work);
 		rnp->exp_need_flush = true;
 	}
 
@@ -526,7 +518,7 @@ static void synchronize_sched_expedited_wait(struct rcu_state *rsp)
 	jiffies_start = jiffies;
 
 	for (;;) {
-		ret = swait_event_timeout_exclusive(
+		ret = swait_event_timeout(
 				rsp->expedited_wq,
 				sync_rcu_preempt_exp_done_unlocked(rnp_root),
 				jiffies_stall);

@@ -24,6 +24,7 @@
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/mount.h>
+#include <linux/magic.h>
 
 #include <linux/uaccess.h>
 
@@ -104,10 +105,8 @@ void __init proc_init_kmemcache(void)
 		kmem_cache_create("pde_opener", sizeof(struct pde_opener), 0,
 				  SLAB_ACCOUNT|SLAB_PANIC, NULL);
 	proc_dir_entry_cache = kmem_cache_create_usercopy(
-		"proc_dir_entry", SIZEOF_PDE, 0, SLAB_PANIC,
-		offsetof(struct proc_dir_entry, inline_name),
-		SIZEOF_PDE_INLINE_NAME, NULL);
-	BUILD_BUG_ON(sizeof(struct proc_dir_entry) >= SIZEOF_PDE);
+		"proc_dir_entry", SIZEOF_PDE_SLOT, 0, SLAB_PANIC,
+		OFFSETOF_PDE_NAME, SIZEOF_PDE_INLINE_NAME, NULL);
 }
 
 static int proc_show_options(struct seq_file *seq, struct dentry *root)
@@ -123,13 +122,13 @@ static int proc_show_options(struct seq_file *seq, struct dentry *root)
 	return 0;
 }
 
-const struct super_operations proc_sops = {
+static const struct super_operations proc_sops = {
 	.alloc_inode	= proc_alloc_inode,
 	.destroy_inode	= proc_destroy_inode,
 	.drop_inode	= generic_delete_inode,
 	.evict_inode	= proc_evict_inode,
 	.statfs		= simple_statfs,
-	.reconfigure	= proc_reconfigure,
+	.remount_fs	= proc_remount,
 	.show_options	= proc_show_options,
 };
 
@@ -488,4 +487,49 @@ struct inode *proc_get_inode(struct super_block *sb, struct proc_dir_entry *de)
 	} else
 	       pde_put(de);
 	return inode;
+}
+
+int proc_fill_super(struct super_block *s, void *data, int silent)
+{
+	struct pid_namespace *ns = get_pid_ns(s->s_fs_info);
+	struct inode *root_inode;
+	int ret;
+
+	if (!proc_parse_options(data, ns))
+		return -EINVAL;
+
+	/* User space would break if executables or devices appear on proc */
+	s->s_iflags |= SB_I_USERNS_VISIBLE | SB_I_NOEXEC | SB_I_NODEV;
+	s->s_flags |= SB_NODIRATIME | SB_NOSUID | SB_NOEXEC;
+	s->s_blocksize = 1024;
+	s->s_blocksize_bits = 10;
+	s->s_magic = PROC_SUPER_MAGIC;
+	s->s_op = &proc_sops;
+	s->s_time_gran = 1;
+
+	/*
+	 * procfs isn't actually a stacking filesystem; however, there is
+	 * too much magic going on inside it to permit stacking things on
+	 * top of it
+	 */
+	s->s_stack_depth = FILESYSTEM_MAX_STACK_DEPTH;
+	
+	pde_get(&proc_root);
+	root_inode = proc_get_inode(s, &proc_root);
+	if (!root_inode) {
+		pr_err("proc_fill_super: get root inode failed\n");
+		return -ENOMEM;
+	}
+
+	s->s_root = d_make_root(root_inode);
+	if (!s->s_root) {
+		pr_err("proc_fill_super: allocate dentry failed\n");
+		return -ENOMEM;
+	}
+
+	ret = proc_setup_self(s);
+	if (ret) {
+		return ret;
+	}
+	return proc_setup_thread_self(s);
 }

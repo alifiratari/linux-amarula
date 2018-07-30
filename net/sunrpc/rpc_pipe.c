@@ -1367,7 +1367,7 @@ rpc_gssd_dummy_depopulate(struct dentry *pipe_dentry)
 }
 
 static int
-rpc_fill_super(struct super_block *sb, void *data, size_t data_size, int silent)
+rpc_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode;
 	struct dentry *root, *gssd_dentry;
@@ -1430,11 +1430,10 @@ EXPORT_SYMBOL_GPL(gssd_running);
 
 static struct dentry *
 rpc_mount(struct file_system_type *fs_type,
-	  int flags, const char *dev_name, void *data, size_t data_size)
+		int flags, const char *dev_name, void *data)
 {
 	struct net *net = current->nsproxy->net_ns;
-	return mount_ns(fs_type, flags, data, data_size,
-			net, net->user_ns, rpc_fill_super);
+	return mount_ns(fs_type, flags, data, net, net->user_ns, rpc_fill_super);
 }
 
 static void rpc_kill_sb(struct super_block *sb)

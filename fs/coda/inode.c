@@ -93,8 +93,7 @@ void coda_destroy_inodecache(void)
 	kmem_cache_destroy(coda_inode_cachep);
 }
 
-static int coda_remount(struct super_block *sb, int *flags,
-			char *data, size_t data_size)
+static int coda_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
 	*flags |= SB_NOATIME;
@@ -151,8 +150,7 @@ Ebadf:
 	return -1;
 }
 
-static int coda_fill_super(struct super_block *sb, void *data, size_t data_size,
-			   int silent)
+static int coda_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *root = NULL;
 	struct venus_comm *vc;
@@ -318,10 +316,9 @@ static int coda_statfs(struct dentry *dentry, struct kstatfs *buf)
 /* init_coda: used by filesystems.c to register coda */
 
 static struct dentry *coda_mount(struct file_system_type *fs_type,
-				 int flags, const char *dev_name,
-				 void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_nodev(fs_type, flags, data, data_size, coda_fill_super);
+	return mount_nodev(fs_type, flags, data, coda_fill_super);
 }
 
 struct file_system_type coda_fs_type = {

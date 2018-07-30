@@ -14,6 +14,7 @@
 #include <asm/facility.h>
 
 #include "ap_bus.h"
+#include "ap_asm.h"
 
 /*
  * AP card related attributes.

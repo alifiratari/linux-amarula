@@ -1034,10 +1034,8 @@ static pg_data_t __ref *hotadd_new_pgdat(int nid, u64 start)
 	return pgdat;
 }
 
-static void rollback_node_hotadd(int nid)
+static void rollback_node_hotadd(int nid, pg_data_t *pgdat)
 {
-	pg_data_t *pgdat = NODE_DATA(nid);
-
 	arch_refresh_nodedata(nid, NULL);
 	free_percpu(pgdat->per_cpu_nodestats);
 	arch_free_nodedata(pgdat);
@@ -1048,48 +1046,28 @@ static void rollback_node_hotadd(int nid)
 /**
  * try_online_node - online a node if offlined
  * @nid: the node ID
- * @start: start addr of the node
- * @set_node_online: Whether we want to online the node
- * called by cpu_up() to online a node without onlined memory.
  *
- * Returns:
- * 1 -> a new node has been allocated
- * 0 -> the node is already online
- * -ENOMEM -> the node could not be allocated
+ * called by cpu_up() to online a node without onlined memory.
  */
-static int __try_online_node(int nid, u64 start, bool set_node_online)
+int try_online_node(int nid)
 {
-	pg_data_t *pgdat;
-	int ret = 1;
+	pg_data_t	*pgdat;
+	int	ret;
 
 	if (node_online(nid))
 		return 0;
 
-	pgdat = hotadd_new_pgdat(nid, start);
+	mem_hotplug_begin();
+	pgdat = hotadd_new_pgdat(nid, 0);
 	if (!pgdat) {
 		pr_err("Cannot online node %d due to NULL pgdat\n", nid);
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	if (set_node_online) {
-		node_set_online(nid);
-		ret = register_one_node(nid);
-		BUG_ON(ret);
-	}
+	node_set_online(nid);
+	ret = register_one_node(nid);
+	BUG_ON(ret);
 out:
-	return ret;
-}
-
-/*
- * Users of this function always want to online/register the node
- */
-int try_online_node(int nid)
-{
-	int ret;
-
-	mem_hotplug_begin();
-	ret =  __try_online_node(nid, 0, true);
 	mem_hotplug_done();
 	return ret;
 }
@@ -1121,7 +1099,9 @@ static int online_memory_block(struct memory_block *mem, void *arg)
 int __ref add_memory_resource(int nid, struct resource *res, bool online)
 {
 	u64 start, size;
-	bool new_node = false;
+	pg_data_t *pgdat = NULL;
+	bool new_pgdat;
+	bool new_node;
 	int ret;
 
 	start = res->start;
@@ -1130,6 +1110,11 @@ int __ref add_memory_resource(int nid, struct resource *res, bool online)
 	ret = check_hotplug_memory_range(start, size);
 	if (ret)
 		return ret;
+
+	{	/* Stupid hack to suppress address-never-null warning */
+		void *p = NODE_DATA(nid);
+		new_pgdat = !p;
+	}
 
 	mem_hotplug_begin();
 
@@ -1141,30 +1126,47 @@ int __ref add_memory_resource(int nid, struct resource *res, bool online)
 	 */
 	memblock_add_node(start, size, nid);
 
-	ret = __try_online_node(nid, start, false);
-	if (ret < 0)
-		goto error;
-	new_node = ret;
+	new_node = !node_online(nid);
+	if (new_node) {
+		pgdat = hotadd_new_pgdat(nid, start);
+		ret = -ENOMEM;
+		if (!pgdat)
+			goto error;
+	}
 
 	/* call arch's memory hotadd */
 	ret = arch_add_memory(nid, start, size, NULL, true);
+
 	if (ret < 0)
 		goto error;
 
+	/* we online node here. we can't roll back from here. */
+	node_set_online(nid);
+
 	if (new_node) {
-		/* If sysfs file of new node can't be created, cpu on the node
+		unsigned long start_pfn = start >> PAGE_SHIFT;
+		unsigned long nr_pages = size >> PAGE_SHIFT;
+
+		ret = __register_one_node(nid);
+		if (ret)
+			goto register_fail;
+
+		/*
+		 * link memory sections under this node. This is already
+		 * done when creatig memory section in register_new_memory
+		 * but that depends to have the node registered so offline
+		 * nodes have to go through register_node.
+		 * TODO clean up this mess.
+		 */
+		ret = link_mem_sections(nid, start_pfn, nr_pages, false);
+register_fail:
+		/*
+		 * If sysfs file of new node can't create, cpu on the node
 		 * can't be hot-added. There is no rollback way now.
 		 * So, check by BUG_ON() to catch it reluctantly..
-		 * We online node here. We can't roll back from here.
 		 */
-		node_set_online(nid);
-		ret = __register_one_node(nid);
 		BUG_ON(ret);
 	}
-
-	/* link memory sections under this node.*/
-	ret = link_mem_sections(nid, PFN_DOWN(start), PFN_UP(start + size - 1));
-	BUG_ON(ret);
 
 	/* create new memmap entry */
 	firmware_map_add_hotplug(start, start + size, "System RAM");
@@ -1178,8 +1180,8 @@ int __ref add_memory_resource(int nid, struct resource *res, bool online)
 
 error:
 	/* rollback pgdat allocation and others */
-	if (new_node)
-		rollback_node_hotadd(nid);
+	if (new_pgdat && pgdat)
+		rollback_node_hotadd(nid, pgdat);
 	memblock_remove(start, size);
 
 out:

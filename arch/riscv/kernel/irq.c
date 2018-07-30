@@ -16,6 +16,10 @@
 #include <linux/irqchip.h>
 #include <linux/irqdomain.h>
 
+#ifdef CONFIG_RISCV_INTC
+#include <linux/irqchip/irq-riscv-intc.h>
+#endif
+
 void __init init_IRQ(void)
 {
 	irqchip_init();

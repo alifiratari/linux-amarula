@@ -20,6 +20,8 @@
 #include <linux/jiffies.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
+#include <linux/kfifo.h>
+#include <linux/spinlock.h>
 #include <linux/iio/iio.h>
 #include <linux/acpi.h>
 #include <linux/platform_device.h>
@@ -82,7 +84,7 @@ static const struct inv_mpu6050_reg_map reg_set_6050 = {
 static const struct inv_mpu6050_chip_config chip_config_6050 = {
 	.fsr = INV_MPU6050_FSR_2000DPS,
 	.lpf = INV_MPU6050_FILTER_20HZ,
-	.divider = INV_MPU6050_FIFO_RATE_TO_DIVIDER(INV_MPU6050_INIT_FIFO_RATE),
+	.fifo_rate = INV_MPU6050_INIT_FIFO_RATE,
 	.gyro_fifo_enable = false,
 	.accl_fifo_enable = false,
 	.accl_fs = INV_MPU6050_FS_02G,
@@ -278,7 +280,7 @@ static int inv_mpu6050_init_config(struct iio_dev *indio_dev)
 	if (result)
 		goto error_power_off;
 
-	d = INV_MPU6050_FIFO_RATE_TO_DIVIDER(INV_MPU6050_INIT_FIFO_RATE);
+	d = INV_MPU6050_ONE_K_HZ / INV_MPU6050_INIT_FIFO_RATE - 1;
 	result = regmap_write(st->map, st->reg->sample_rate_div, d);
 	if (result)
 		goto error_power_off;
@@ -294,13 +296,6 @@ static int inv_mpu6050_init_config(struct iio_dev *indio_dev)
 
 	memcpy(&st->chip_config, hw_info[st->chip_type].config,
 	       sizeof(struct inv_mpu6050_chip_config));
-
-	/*
-	 * Internal chip period is 1ms (1kHz).
-	 * Let's use at the beginning the theorical value before measuring
-	 * with interrupt timestamps.
-	 */
-	st->chip_period = NSEC_PER_MSEC;
 
 	return inv_mpu6050_set_power_itg(st, false);
 
@@ -635,7 +630,7 @@ static ssize_t
 inv_mpu6050_fifo_rate_store(struct device *dev, struct device_attribute *attr,
 			    const char *buf, size_t count)
 {
-	int fifo_rate;
+	s32 fifo_rate;
 	u8 d;
 	int result;
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
@@ -651,13 +646,8 @@ inv_mpu6050_fifo_rate_store(struct device *dev, struct device_attribute *attr,
 	if (result)
 		return result;
 
-	/* compute the chip sample rate divider */
-	d = INV_MPU6050_FIFO_RATE_TO_DIVIDER(fifo_rate);
-	/* compute back the fifo rate to handle truncation cases */
-	fifo_rate = INV_MPU6050_DIVIDER_TO_FIFO_RATE(d);
-
 	mutex_lock(&st->lock);
-	if (d == st->chip_config.divider) {
+	if (fifo_rate == st->chip_config.fifo_rate) {
 		result = 0;
 		goto fifo_rate_fail_unlock;
 	}
@@ -665,10 +655,11 @@ inv_mpu6050_fifo_rate_store(struct device *dev, struct device_attribute *attr,
 	if (result)
 		goto fifo_rate_fail_unlock;
 
+	d = INV_MPU6050_ONE_K_HZ / fifo_rate - 1;
 	result = regmap_write(st->map, st->reg->sample_rate_div, d);
 	if (result)
 		goto fifo_rate_fail_power_off;
-	st->chip_config.divider = d;
+	st->chip_config.fifo_rate = fifo_rate;
 
 	result = inv_mpu6050_set_lpf(st, fifo_rate);
 	if (result)
@@ -696,7 +687,7 @@ inv_fifo_rate_show(struct device *dev, struct device_attribute *attr,
 	unsigned fifo_rate;
 
 	mutex_lock(&st->lock);
-	fifo_rate = INV_MPU6050_DIVIDER_TO_FIFO_RATE(st->chip_config.divider);
+	fifo_rate = st->chip_config.fifo_rate;
 	mutex_unlock(&st->lock);
 
 	return scnprintf(buf, PAGE_SIZE, "%u\n", fifo_rate);
@@ -1014,7 +1005,7 @@ int inv_mpu_core_probe(struct regmap *regmap, int irq, const char *name,
 	indio_dev->modes = INDIO_BUFFER_TRIGGERED;
 
 	result = devm_iio_triggered_buffer_setup(dev, indio_dev,
-						 iio_pollfunc_store_time,
+						 inv_mpu6050_irq_handler,
 						 inv_mpu6050_read_fifo,
 						 NULL);
 	if (result) {
@@ -1027,6 +1018,8 @@ int inv_mpu_core_probe(struct regmap *regmap, int irq, const char *name,
 		return result;
 	}
 
+	INIT_KFIFO(st->timestamps);
+	spin_lock_init(&st->time_stamp_lock);
 	result = devm_iio_device_register(dev, indio_dev);
 	if (result) {
 		dev_err(dev, "IIO register fail %d\n", result);

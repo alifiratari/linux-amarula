@@ -117,40 +117,44 @@ static void my_wq_function(struct work_struct *work)
 
 int bcm2835_audio_start(struct bcm2835_alsa_stream *alsa_stream)
 {
-	struct bcm2835_audio_work *work;
+	if (alsa_stream->my_wq) {
+		struct bcm2835_audio_work *work;
 
-	work = kmalloc(sizeof(*work), GFP_ATOMIC);
-	/*--- Queue some work (item 1) ---*/
-	if (!work) {
-		LOG_ERR(" .. Error: NULL work kmalloc\n");
-		return -ENOMEM;
-	}
-	INIT_WORK(&work->my_work, my_wq_function);
-	work->alsa_stream = alsa_stream;
-	work->cmd = BCM2835_AUDIO_START;
-	if (!queue_work(alsa_stream->my_wq, &work->my_work)) {
-		kfree(work);
-		return -EBUSY;
+		work = kmalloc(sizeof(*work), GFP_ATOMIC);
+		/*--- Queue some work (item 1) ---*/
+		if (!work) {
+			LOG_ERR(" .. Error: NULL work kmalloc\n");
+			return -ENOMEM;
+		}
+		INIT_WORK(&work->my_work, my_wq_function);
+		work->alsa_stream = alsa_stream;
+		work->cmd = BCM2835_AUDIO_START;
+		if (!queue_work(alsa_stream->my_wq, &work->my_work)) {
+			kfree(work);
+			return -EBUSY;
+		}
 	}
 	return 0;
 }
 
 int bcm2835_audio_stop(struct bcm2835_alsa_stream *alsa_stream)
 {
-	struct bcm2835_audio_work *work;
+	if (alsa_stream->my_wq) {
+		struct bcm2835_audio_work *work;
 
-	work = kmalloc(sizeof(*work), GFP_ATOMIC);
-	/*--- Queue some work (item 1) ---*/
-	if (!work) {
-		LOG_ERR(" .. Error: NULL work kmalloc\n");
-		return -ENOMEM;
-	}
-	INIT_WORK(&work->my_work, my_wq_function);
-	work->alsa_stream = alsa_stream;
-	work->cmd = BCM2835_AUDIO_STOP;
-	if (!queue_work(alsa_stream->my_wq, &work->my_work)) {
-		kfree(work);
-		return -EBUSY;
+		work = kmalloc(sizeof(*work), GFP_ATOMIC);
+		/*--- Queue some work (item 1) ---*/
+		if (!work) {
+			LOG_ERR(" .. Error: NULL work kmalloc\n");
+			return -ENOMEM;
+		}
+		INIT_WORK(&work->my_work, my_wq_function);
+		work->alsa_stream = alsa_stream;
+		work->cmd = BCM2835_AUDIO_STOP;
+		if (!queue_work(alsa_stream->my_wq, &work->my_work)) {
+			kfree(work);
+			return -EBUSY;
+		}
 	}
 	return 0;
 }
@@ -158,31 +162,40 @@ int bcm2835_audio_stop(struct bcm2835_alsa_stream *alsa_stream)
 int bcm2835_audio_write(struct bcm2835_alsa_stream *alsa_stream,
 			unsigned int count, void *src)
 {
-	struct bcm2835_audio_work *work;
+	if (alsa_stream->my_wq) {
+		struct bcm2835_audio_work *work;
 
-	work = kmalloc(sizeof(*work), GFP_ATOMIC);
-	/*--- Queue some work (item 1) ---*/
-	if (!work) {
-		LOG_ERR(" .. Error: NULL work kmalloc\n");
-		return -ENOMEM;
-	}
-	INIT_WORK(&work->my_work, my_wq_function);
-	work->alsa_stream = alsa_stream;
-	work->cmd = BCM2835_AUDIO_WRITE;
-	work->src = src;
-	work->count = count;
-	if (!queue_work(alsa_stream->my_wq, &work->my_work)) {
-		kfree(work);
-		return -EBUSY;
+		work = kmalloc(sizeof(*work), GFP_ATOMIC);
+		/*--- Queue some work (item 1) ---*/
+		if (!work) {
+			LOG_ERR(" .. Error: NULL work kmalloc\n");
+			return -ENOMEM;
+		}
+		INIT_WORK(&work->my_work, my_wq_function);
+		work->alsa_stream = alsa_stream;
+		work->cmd = BCM2835_AUDIO_WRITE;
+		work->src = src;
+		work->count = count;
+		if (!queue_work(alsa_stream->my_wq, &work->my_work)) {
+			kfree(work);
+			return -EBUSY;
+		}
 	}
 	return 0;
 }
 
+static void my_workqueue_init(struct bcm2835_alsa_stream *alsa_stream)
+{
+	alsa_stream->my_wq = alloc_workqueue("my_queue", WQ_HIGHPRI, 1);
+}
+
 static void my_workqueue_quit(struct bcm2835_alsa_stream *alsa_stream)
 {
-	flush_workqueue(alsa_stream->my_wq);
-	destroy_workqueue(alsa_stream->my_wq);
-	alsa_stream->my_wq = NULL;
+	if (alsa_stream->my_wq) {
+		flush_workqueue(alsa_stream->my_wq);
+		destroy_workqueue(alsa_stream->my_wq);
+		alsa_stream->my_wq = NULL;
+	}
 }
 
 static void audio_vchi_callback(void *param,
@@ -423,21 +436,19 @@ int bcm2835_audio_open(struct bcm2835_alsa_stream *alsa_stream)
 	int status;
 	int ret;
 
-	alsa_stream->my_wq = alloc_workqueue("my_queue", WQ_HIGHPRI, 1);
-	if (!alsa_stream->my_wq)
-		return -ENOMEM;
+	my_workqueue_init(alsa_stream);
 
 	ret = bcm2835_audio_open_connection(alsa_stream);
-	if (ret)
-		goto free_wq;
-
+	if (ret) {
+		ret = -1;
+		goto exit;
+	}
 	instance = alsa_stream->instance;
 	LOG_DBG(" instance (%p)\n", instance);
 
 	if (mutex_lock_interruptible(&instance->vchi_mutex)) {
 		LOG_DBG("Interrupted whilst waiting for lock on (%d)\n", instance->num_connections);
-		ret = -EINTR;
-		goto free_wq;
+		return -EINTR;
 	}
 	vchi_service_use(instance->vchi_handle[0]);
 
@@ -460,11 +471,7 @@ int bcm2835_audio_open(struct bcm2835_alsa_stream *alsa_stream)
 unlock:
 	vchi_service_release(instance->vchi_handle[0]);
 	mutex_unlock(&instance->vchi_mutex);
-
-free_wq:
-	if (ret)
-		destroy_workqueue(alsa_stream->my_wq);
-
+exit:
 	return ret;
 }
 

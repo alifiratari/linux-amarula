@@ -9,7 +9,6 @@
 #include <linux/mm.h>
 #include <linux/io.h>
 #include <linux/serial_reg.h>
-#include <asm/setup.h>
 
 #include "devices.h"
 #include "ar2315_regs.h"

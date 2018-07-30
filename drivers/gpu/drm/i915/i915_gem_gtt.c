@@ -204,9 +204,9 @@ static int ppgtt_bind_vma(struct i915_vma *vma,
 			return err;
 	}
 
-	/* Applicable to VLV, and gen8+ */
+	/* Currently applicable only to VLV */
 	pte_flags = 0;
-	if (i915_gem_object_is_readonly(vma->obj))
+	if (vma->obj->gt_ro)
 		pte_flags |= PTE_READ_ONLY;
 
 	vma->vm->insert_entries(vma->vm, vma, cache_level, pte_flags);
@@ -244,13 +244,10 @@ static void clear_pages(struct i915_vma *vma)
 }
 
 static gen8_pte_t gen8_pte_encode(dma_addr_t addr,
-				  enum i915_cache_level level,
-				  u32 flags)
+				  enum i915_cache_level level)
 {
-	gen8_pte_t pte = addr | _PAGE_PRESENT | _PAGE_RW;
-
-	if (unlikely(flags & PTE_READ_ONLY))
-		pte &= ~_PAGE_RW;
+	gen8_pte_t pte = _PAGE_PRESENT | _PAGE_RW;
+	pte |= addr;
 
 	switch (level) {
 	case I915_CACHE_NONE:
@@ -378,70 +375,37 @@ static gen6_pte_t iris_pte_encode(dma_addr_t addr,
 	return pte;
 }
 
-static void stash_init(struct pagestash *stash)
-{
-	pagevec_init(&stash->pvec);
-	spin_lock_init(&stash->lock);
-}
-
-static struct page *stash_pop_page(struct pagestash *stash)
-{
-	struct page *page = NULL;
-
-	spin_lock(&stash->lock);
-	if (likely(stash->pvec.nr))
-		page = stash->pvec.pages[--stash->pvec.nr];
-	spin_unlock(&stash->lock);
-
-	return page;
-}
-
-static void stash_push_pagevec(struct pagestash *stash, struct pagevec *pvec)
-{
-	int nr;
-
-	spin_lock_nested(&stash->lock, SINGLE_DEPTH_NESTING);
-
-	nr = min_t(int, pvec->nr, pagevec_space(&stash->pvec));
-	memcpy(stash->pvec.pages + stash->pvec.nr,
-	       pvec->pages + pvec->nr - nr,
-	       sizeof(pvec->pages[0]) * nr);
-	stash->pvec.nr += nr;
-
-	spin_unlock(&stash->lock);
-
-	pvec->nr -= nr;
-}
-
 static struct page *vm_alloc_page(struct i915_address_space *vm, gfp_t gfp)
 {
-	struct pagevec stack;
-	struct page *page;
+	struct pagevec *pvec = &vm->free_pages;
+	struct pagevec stash;
 
 	if (I915_SELFTEST_ONLY(should_fail(&vm->fault_attr, 1)))
 		i915_gem_shrink_all(vm->i915);
 
-	page = stash_pop_page(&vm->free_pages);
-	if (page)
-		return page;
+	if (likely(pvec->nr))
+		return pvec->pages[--pvec->nr];
 
 	if (!vm->pt_kmap_wc)
 		return alloc_page(gfp);
 
+	/* A placeholder for a specific mutex to guard the WC stash */
+	lockdep_assert_held(&vm->i915->drm.struct_mutex);
+
 	/* Look in our global stash of WC pages... */
-	page = stash_pop_page(&vm->i915->mm.wc_stash);
-	if (page)
-		return page;
+	pvec = &vm->i915->mm.wc_stash;
+	if (likely(pvec->nr))
+		return pvec->pages[--pvec->nr];
 
 	/*
-	 * Otherwise batch allocate pages to amortize cost of set_pages_wc.
+	 * Otherwise batch allocate pages to amoritize cost of set_pages_wc.
 	 *
 	 * We have to be careful as page allocation may trigger the shrinker
 	 * (via direct reclaim) which will fill up the WC stash underneath us.
 	 * So we add our WB pages into a temporary pvec on the stack and merge
 	 * them into the WC stash after all the allocations are complete.
 	 */
-	pagevec_init(&stack);
+	pagevec_init(&stash);
 	do {
 		struct page *page;
 
@@ -449,67 +413,59 @@ static struct page *vm_alloc_page(struct i915_address_space *vm, gfp_t gfp)
 		if (unlikely(!page))
 			break;
 
-		stack.pages[stack.nr++] = page;
-	} while (pagevec_space(&stack));
+		stash.pages[stash.nr++] = page;
+	} while (stash.nr < pagevec_space(pvec));
 
-	if (stack.nr && !set_pages_array_wc(stack.pages, stack.nr)) {
-		page = stack.pages[--stack.nr];
+	if (stash.nr) {
+		int nr = min_t(int, stash.nr, pagevec_space(pvec));
+		struct page **pages = stash.pages + stash.nr - nr;
 
-		/* Merge spare WC pages to the global stash */
-		stash_push_pagevec(&vm->i915->mm.wc_stash, &stack);
+		if (nr && !set_pages_array_wc(pages, nr)) {
+			memcpy(pvec->pages + pvec->nr,
+			       pages, sizeof(pages[0]) * nr);
+			pvec->nr += nr;
+			stash.nr -= nr;
+		}
 
-		/* Push any surplus WC pages onto the local VM stash */
-		if (stack.nr)
-			stash_push_pagevec(&vm->free_pages, &stack);
+		pagevec_release(&stash);
 	}
 
-	/* Return unwanted leftovers */
-	if (unlikely(stack.nr)) {
-		WARN_ON_ONCE(set_pages_array_wb(stack.pages, stack.nr));
-		__pagevec_release(&stack);
-	}
-
-	return page;
+	return likely(pvec->nr) ? pvec->pages[--pvec->nr] : NULL;
 }
 
 static void vm_free_pages_release(struct i915_address_space *vm,
 				  bool immediate)
 {
-	struct pagevec *pvec = &vm->free_pages.pvec;
-	struct pagevec stack;
+	struct pagevec *pvec = &vm->free_pages;
 
-	lockdep_assert_held(&vm->free_pages.lock);
 	GEM_BUG_ON(!pagevec_count(pvec));
 
 	if (vm->pt_kmap_wc) {
-		/*
-		 * When we use WC, first fill up the global stash and then
+		struct pagevec *stash = &vm->i915->mm.wc_stash;
+
+		/* When we use WC, first fill up the global stash and then
 		 * only if full immediately free the overflow.
 		 */
-		stash_push_pagevec(&vm->i915->mm.wc_stash, pvec);
 
-		/*
-		 * As we have made some room in the VM's free_pages,
-		 * we can wait for it to fill again. Unless we are
-		 * inside i915_address_space_fini() and must
-		 * immediately release the pages!
-		 */
-		if (pvec->nr <= (immediate ? 0 : PAGEVEC_SIZE - 1))
-			return;
+		lockdep_assert_held(&vm->i915->drm.struct_mutex);
+		if (pagevec_space(stash)) {
+			do {
+				stash->pages[stash->nr++] =
+					pvec->pages[--pvec->nr];
+				if (!pvec->nr)
+					return;
+			} while (pagevec_space(stash));
 
-		/*
-		 * We have to drop the lock to allow ourselves to sleep,
-		 * so take a copy of the pvec and clear the stash for
-		 * others to use it as we sleep.
-		 */
-		stack = *pvec;
-		pagevec_reinit(pvec);
-		spin_unlock(&vm->free_pages.lock);
+			/* As we have made some room in the VM's free_pages,
+			 * we can wait for it to fill again. Unless we are
+			 * inside i915_address_space_fini() and must
+			 * immediately release the pages!
+			 */
+			if (!immediate)
+				return;
+		}
 
-		pvec = &stack;
 		set_pages_array_wb(pvec->pages, pvec->nr);
-
-		spin_lock(&vm->free_pages.lock);
 	}
 
 	__pagevec_release(pvec);
@@ -525,45 +481,8 @@ static void vm_free_page(struct i915_address_space *vm, struct page *page)
 	 * unconditional might_sleep() for everybody.
 	 */
 	might_sleep();
-	spin_lock(&vm->free_pages.lock);
-	if (!pagevec_add(&vm->free_pages.pvec, page))
+	if (!pagevec_add(&vm->free_pages, page))
 		vm_free_pages_release(vm, false);
-	spin_unlock(&vm->free_pages.lock);
-}
-
-static void i915_address_space_init(struct i915_address_space *vm,
-				    struct drm_i915_private *dev_priv)
-{
-	/*
-	 * The vm->mutex must be reclaim safe (for use in the shrinker).
-	 * Do a dummy acquire now under fs_reclaim so that any allocation
-	 * attempt holding the lock is immediately reported by lockdep.
-	 */
-	mutex_init(&vm->mutex);
-	i915_gem_shrinker_taints_mutex(&vm->mutex);
-
-	GEM_BUG_ON(!vm->total);
-	drm_mm_init(&vm->mm, 0, vm->total);
-	vm->mm.head_node.color = I915_COLOR_UNEVICTABLE;
-
-	stash_init(&vm->free_pages);
-
-	INIT_LIST_HEAD(&vm->active_list);
-	INIT_LIST_HEAD(&vm->inactive_list);
-	INIT_LIST_HEAD(&vm->unbound_list);
-}
-
-static void i915_address_space_fini(struct i915_address_space *vm)
-{
-	spin_lock(&vm->free_pages.lock);
-	if (pagevec_count(&vm->free_pages.pvec))
-		vm_free_pages_release(vm, true);
-	GEM_BUG_ON(pagevec_count(&vm->free_pages.pvec));
-	spin_unlock(&vm->free_pages.lock);
-
-	drm_mm_takedown(&vm->mm);
-
-	mutex_destroy(&vm->mutex);
 }
 
 static int __setup_page_dma(struct i915_address_space *vm,
@@ -574,11 +493,8 @@ static int __setup_page_dma(struct i915_address_space *vm,
 	if (unlikely(!p->page))
 		return -ENOMEM;
 
-	p->daddr = dma_map_page_attrs(vm->dma,
-				      p->page, 0, PAGE_SIZE,
-				      PCI_DMA_BIDIRECTIONAL,
-				      DMA_ATTR_SKIP_CPU_SYNC |
-				      DMA_ATTR_NO_WARN);
+	p->daddr = dma_map_page(vm->dma, p->page, 0, PAGE_SIZE,
+				PCI_DMA_BIDIRECTIONAL);
 	if (unlikely(dma_mapping_error(vm->dma, p->daddr))) {
 		vm_free_page(vm, p->page);
 		return -ENOMEM;
@@ -659,11 +575,8 @@ setup_scratch_page(struct i915_address_space *vm, gfp_t gfp)
 		if (unlikely(!page))
 			goto skip;
 
-		addr = dma_map_page_attrs(vm->dma,
-					  page, 0, size,
-					  PCI_DMA_BIDIRECTIONAL,
-					  DMA_ATTR_SKIP_CPU_SYNC |
-					  DMA_ATTR_NO_WARN);
+		addr = dma_map_page(vm->dma, page, 0, size,
+				    PCI_DMA_BIDIRECTIONAL);
 		if (unlikely(dma_mapping_error(vm->dma, addr)))
 			goto free_page;
 
@@ -724,7 +637,7 @@ static void gen8_initialize_pt(struct i915_address_space *vm,
 			       struct i915_page_table *pt)
 {
 	fill_px(vm, pt,
-		gen8_pte_encode(vm->scratch_page.daddr, I915_CACHE_LLC, 0));
+		gen8_pte_encode(vm->scratch_page.daddr, I915_CACHE_LLC));
 }
 
 static void gen6_initialize_pt(struct gen6_hw_ppgtt *ppgtt,
@@ -872,7 +785,7 @@ static bool gen8_ppgtt_clear_pt(struct i915_address_space *vm,
 	unsigned int pte = gen8_pte_index(start);
 	unsigned int pte_end = pte + num_entries;
 	const gen8_pte_t scratch_pte =
-		gen8_pte_encode(vm->scratch_page.daddr, I915_CACHE_LLC, 0);
+		gen8_pte_encode(vm->scratch_page.daddr, I915_CACHE_LLC);
 	gen8_pte_t *vaddr;
 
 	GEM_BUG_ON(num_entries > pt->used_ptes);
@@ -1044,11 +957,10 @@ gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 			      struct i915_page_directory_pointer *pdp,
 			      struct sgt_dma *iter,
 			      struct gen8_insert_pte *idx,
-			      enum i915_cache_level cache_level,
-			      u32 flags)
+			      enum i915_cache_level cache_level)
 {
 	struct i915_page_directory *pd;
-	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level, flags);
+	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level);
 	gen8_pte_t *vaddr;
 	bool ret;
 
@@ -1099,14 +1011,14 @@ gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 static void gen8_ppgtt_insert_3lvl(struct i915_address_space *vm,
 				   struct i915_vma *vma,
 				   enum i915_cache_level cache_level,
-				   u32 flags)
+				   u32 unused)
 {
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
 	struct sgt_dma iter = sgt_dma(vma);
 	struct gen8_insert_pte idx = gen8_insert_pte(vma->node.start);
 
 	gen8_ppgtt_insert_pte_entries(ppgtt, &ppgtt->pdp, &iter, &idx,
-				      cache_level, flags);
+				      cache_level);
 
 	vma->page_sizes.gtt = I915_GTT_PAGE_SIZE;
 }
@@ -1114,10 +1026,9 @@ static void gen8_ppgtt_insert_3lvl(struct i915_address_space *vm,
 static void gen8_ppgtt_insert_huge_entries(struct i915_vma *vma,
 					   struct i915_page_directory_pointer **pdps,
 					   struct sgt_dma *iter,
-					   enum i915_cache_level cache_level,
-					   u32 flags)
+					   enum i915_cache_level cache_level)
 {
-	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level, flags);
+	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level);
 	u64 start = vma->node.start;
 	dma_addr_t rem = iter->sg->length;
 
@@ -1233,21 +1144,19 @@ static void gen8_ppgtt_insert_huge_entries(struct i915_vma *vma,
 static void gen8_ppgtt_insert_4lvl(struct i915_address_space *vm,
 				   struct i915_vma *vma,
 				   enum i915_cache_level cache_level,
-				   u32 flags)
+				   u32 unused)
 {
 	struct i915_hw_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
 	struct sgt_dma iter = sgt_dma(vma);
 	struct i915_page_directory_pointer **pdps = ppgtt->pml4.pdps;
 
 	if (vma->page_sizes.sg > I915_GTT_PAGE_SIZE) {
-		gen8_ppgtt_insert_huge_entries(vma, pdps, &iter, cache_level,
-					       flags);
+		gen8_ppgtt_insert_huge_entries(vma, pdps, &iter, cache_level);
 	} else {
 		struct gen8_insert_pte idx = gen8_insert_pte(vma->node.start);
 
 		while (gen8_ppgtt_insert_pte_entries(ppgtt, pdps[idx.pml4e++],
-						     &iter, &idx, cache_level,
-						     flags))
+						     &iter, &idx, cache_level))
 			GEM_BUG_ON(idx.pml4e >= GEN8_PML4ES_PER_PML4);
 
 		vma->page_sizes.gtt = I915_GTT_PAGE_SIZE;
@@ -1585,7 +1494,7 @@ static void gen8_dump_ppgtt(struct i915_hw_ppgtt *ppgtt, struct seq_file *m)
 {
 	struct i915_address_space *vm = &ppgtt->vm;
 	const gen8_pte_t scratch_pte =
-		gen8_pte_encode(vm->scratch_page.daddr, I915_CACHE_LLC, 0);
+		gen8_pte_encode(vm->scratch_page.daddr, I915_CACHE_LLC);
 	u64 start = 0, length = ppgtt->vm.total;
 
 	if (use_4lvl(vm)) {
@@ -1653,23 +1562,12 @@ static struct i915_hw_ppgtt *gen8_ppgtt_create(struct drm_i915_private *i915)
 	if (!ppgtt)
 		return ERR_PTR(-ENOMEM);
 
-	kref_init(&ppgtt->ref);
-
 	ppgtt->vm.i915 = i915;
 	ppgtt->vm.dma = &i915->drm.pdev->dev;
 
 	ppgtt->vm.total = USES_FULL_48BIT_PPGTT(i915) ?
 		1ULL << 48 :
 		1ULL << 32;
-
-	/*
-	 * From bdw, there is support for read-only pages in the PPGTT.
-	 *
-	 * XXX GVT is not honouring the lack of RW in the PTE bits.
-	 */
-	ppgtt->vm.has_read_only = !intel_vgpu_active(i915);
-
-	i915_address_space_init(&ppgtt->vm, i915);
 
 	/* There are only few exceptions for gen >=6. chv and bxt.
 	 * And we are not sure about the latter so play safe for now.
@@ -2098,6 +1996,7 @@ static struct i915_vma *pd_vma_create(struct gen6_hw_ppgtt *ppgtt, int size)
 	struct drm_i915_private *i915 = ppgtt->base.vm.i915;
 	struct i915_ggtt *ggtt = &i915->ggtt;
 	struct i915_vma *vma;
+	int i;
 
 	GEM_BUG_ON(!IS_ALIGNED(size, I915_GTT_PAGE_SIZE));
 	GEM_BUG_ON(size > ggtt->vm.total);
@@ -2106,13 +2005,13 @@ static struct i915_vma *pd_vma_create(struct gen6_hw_ppgtt *ppgtt, int size)
 	if (!vma)
 		return ERR_PTR(-ENOMEM);
 
+	for (i = 0; i < ARRAY_SIZE(vma->last_read); i++)
+		init_request_active(&vma->last_read[i], NULL);
 	init_request_active(&vma->last_fence, NULL);
 
 	vma->vm = &ggtt->vm;
 	vma->ops = &pd_vma_ops;
 	vma->private = ppgtt;
-
-	vma->active = RB_ROOT;
 
 	vma->size = size;
 	vma->fence_size = size;
@@ -2169,14 +2068,10 @@ static struct i915_hw_ppgtt *gen6_ppgtt_create(struct drm_i915_private *i915)
 	if (!ppgtt)
 		return ERR_PTR(-ENOMEM);
 
-	kref_init(&ppgtt->base.ref);
-
 	ppgtt->base.vm.i915 = i915;
 	ppgtt->base.vm.dma = &i915->drm.pdev->dev;
 
 	ppgtt->base.vm.total = I915_PDES * GEN6_PTES * PAGE_SIZE;
-
-	i915_address_space_init(&ppgtt->base.vm, i915);
 
 	ppgtt->base.vm.allocate_va_range = gen6_alloc_va_range;
 	ppgtt->base.vm.clear_range = gen6_ppgtt_clear_range;
@@ -2208,6 +2103,30 @@ err_scratch:
 err_free:
 	kfree(ppgtt);
 	return ERR_PTR(err);
+}
+
+static void i915_address_space_init(struct i915_address_space *vm,
+				    struct drm_i915_private *dev_priv,
+				    const char *name)
+{
+	drm_mm_init(&vm->mm, 0, vm->total);
+	vm->mm.head_node.color = I915_COLOR_UNEVICTABLE;
+
+	INIT_LIST_HEAD(&vm->active_list);
+	INIT_LIST_HEAD(&vm->inactive_list);
+	INIT_LIST_HEAD(&vm->unbound_list);
+
+	list_add_tail(&vm->global_link, &dev_priv->vm_list);
+	pagevec_init(&vm->free_pages);
+}
+
+static void i915_address_space_fini(struct i915_address_space *vm)
+{
+	if (pagevec_count(&vm->free_pages))
+		vm_free_pages_release(vm, true);
+
+	drm_mm_takedown(&vm->mm);
+	list_del(&vm->global_link);
 }
 
 static void gtt_write_workarounds(struct drm_i915_private *dev_priv)
@@ -2280,7 +2199,8 @@ __hw_ppgtt_create(struct drm_i915_private *i915)
 
 struct i915_hw_ppgtt *
 i915_ppgtt_create(struct drm_i915_private *i915,
-		  struct drm_i915_file_private *fpriv)
+		  struct drm_i915_file_private *fpriv,
+		  const char *name)
 {
 	struct i915_hw_ppgtt *ppgtt;
 
@@ -2288,6 +2208,8 @@ i915_ppgtt_create(struct drm_i915_private *i915,
 	if (IS_ERR(ppgtt))
 		return ppgtt;
 
+	kref_init(&ppgtt->ref);
+	i915_address_space_init(&ppgtt->vm, i915, name);
 	ppgtt->vm.file = fpriv;
 
 	trace_i915_ppgtt_create(&ppgtt->vm);
@@ -2475,7 +2397,7 @@ static void gen8_ggtt_insert_page(struct i915_address_space *vm,
 	gen8_pte_t __iomem *pte =
 		(gen8_pte_t __iomem *)ggtt->gsm + (offset >> PAGE_SHIFT);
 
-	gen8_set_pte(pte, gen8_pte_encode(addr, level, 0));
+	gen8_set_pte(pte, gen8_pte_encode(addr, level));
 
 	ggtt->invalidate(vm->i915);
 }
@@ -2483,18 +2405,13 @@ static void gen8_ggtt_insert_page(struct i915_address_space *vm,
 static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 				     struct i915_vma *vma,
 				     enum i915_cache_level level,
-				     u32 flags)
+				     u32 unused)
 {
 	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
 	struct sgt_iter sgt_iter;
 	gen8_pte_t __iomem *gtt_entries;
-	const gen8_pte_t pte_encode = gen8_pte_encode(0, level, 0);
+	const gen8_pte_t pte_encode = gen8_pte_encode(0, level);
 	dma_addr_t addr;
-
-	/*
-	 * Note that we ignore PTE_READ_ONLY here. The caller must be careful
-	 * not to allow the user to override access to a read only page.
-	 */
 
 	gtt_entries = (gen8_pte_t __iomem *)ggtt->gsm;
 	gtt_entries += vma->node.start >> PAGE_SHIFT;
@@ -2561,7 +2478,7 @@ static void gen8_ggtt_clear_range(struct i915_address_space *vm,
 	unsigned first_entry = start >> PAGE_SHIFT;
 	unsigned num_entries = length >> PAGE_SHIFT;
 	const gen8_pte_t scratch_pte =
-		gen8_pte_encode(vm->scratch_page.daddr, I915_CACHE_LLC, 0);
+		gen8_pte_encode(vm->scratch_page.daddr, I915_CACHE_LLC);
 	gen8_pte_t __iomem *gtt_base =
 		(gen8_pte_t __iomem *)ggtt->gsm + first_entry;
 	const int max_entries = ggtt_total_entries(ggtt) - first_entry;
@@ -2622,14 +2539,13 @@ struct insert_entries {
 	struct i915_address_space *vm;
 	struct i915_vma *vma;
 	enum i915_cache_level level;
-	u32 flags;
 };
 
 static int bxt_vtd_ggtt_insert_entries__cb(void *_arg)
 {
 	struct insert_entries *arg = _arg;
 
-	gen8_ggtt_insert_entries(arg->vm, arg->vma, arg->level, arg->flags);
+	gen8_ggtt_insert_entries(arg->vm, arg->vma, arg->level, 0);
 	bxt_vtd_ggtt_wa(arg->vm);
 
 	return 0;
@@ -2638,9 +2554,9 @@ static int bxt_vtd_ggtt_insert_entries__cb(void *_arg)
 static void bxt_vtd_ggtt_insert_entries__BKL(struct i915_address_space *vm,
 					     struct i915_vma *vma,
 					     enum i915_cache_level level,
-					     u32 flags)
+					     u32 unused)
 {
-	struct insert_entries arg = { vm, vma, level, flags };
+	struct insert_entries arg = { vm, vma, level };
 
 	stop_machine(bxt_vtd_ggtt_insert_entries__cb, &arg, NULL);
 }
@@ -2731,9 +2647,9 @@ static int ggtt_bind_vma(struct i915_vma *vma,
 	struct drm_i915_gem_object *obj = vma->obj;
 	u32 pte_flags;
 
-	/* Applicable to VLV (gen8+ do not support RO in the GGTT) */
+	/* Currently applicable only to VLV */
 	pte_flags = 0;
-	if (i915_gem_object_is_readonly(obj))
+	if (obj->gt_ro)
 		pte_flags |= PTE_READ_ONLY;
 
 	intel_runtime_pm_get(i915);
@@ -2771,7 +2687,7 @@ static int aliasing_gtt_bind_vma(struct i915_vma *vma,
 
 	/* Currently applicable only to VLV */
 	pte_flags = 0;
-	if (i915_gem_object_is_readonly(vma->obj))
+	if (vma->obj->gt_ro)
 		pte_flags |= PTE_READ_ONLY;
 
 	if (flags & I915_VMA_LOCAL_BIND) {
@@ -2823,7 +2739,7 @@ void i915_gem_gtt_finish_pages(struct drm_i915_gem_object *obj,
 	struct i915_ggtt *ggtt = &dev_priv->ggtt;
 
 	if (unlikely(ggtt->do_idle_maps)) {
-		if (i915_gem_wait_for_idle(dev_priv, 0, MAX_SCHEDULE_TIMEOUT)) {
+		if (i915_gem_wait_for_idle(dev_priv, 0)) {
 			DRM_ERROR("Failed to wait for idle; VT'd may hang.\n");
 			/* Wait a bit, in hopes it avoids the hang */
 			udelay(10);
@@ -2872,7 +2788,7 @@ int i915_gem_init_aliasing_ppgtt(struct drm_i915_private *i915)
 	struct i915_hw_ppgtt *ppgtt;
 	int err;
 
-	ppgtt = i915_ppgtt_create(i915, ERR_PTR(-EPERM));
+	ppgtt = i915_ppgtt_create(i915, ERR_PTR(-EPERM), "[alias]");
 	if (IS_ERR(ppgtt))
 		return PTR_ERR(ppgtt);
 
@@ -3002,7 +2918,7 @@ void i915_ggtt_cleanup_hw(struct drm_i915_private *dev_priv)
 
 	ggtt->vm.cleanup(&ggtt->vm);
 
-	pvec = &dev_priv->mm.wc_stash.pvec;
+	pvec = &dev_priv->mm.wc_stash;
 	if (pvec->nr) {
 		set_pages_array_wb(pvec->pages, pvec->nr);
 		__pagevec_release(pvec);
@@ -3602,7 +3518,7 @@ int i915_ggtt_init_hw(struct drm_i915_private *dev_priv)
 	struct i915_ggtt *ggtt = &dev_priv->ggtt;
 	int ret;
 
-	stash_init(&dev_priv->mm.wc_stash);
+	INIT_LIST_HEAD(&dev_priv->vm_list);
 
 	/* Note that we use page colouring to enforce a guard page at the
 	 * end of the address space. This is required as the CS may prefetch
@@ -3610,11 +3526,7 @@ int i915_ggtt_init_hw(struct drm_i915_private *dev_priv)
 	 * and beyond the end of the GTT if we do not provide a guard.
 	 */
 	mutex_lock(&dev_priv->drm.struct_mutex);
-	i915_address_space_init(&ggtt->vm, dev_priv);
-
-	/* Only VLV supports read-only GGTT mappings */
-	ggtt->vm.has_read_only = IS_VALLEYVIEW(dev_priv);
-
+	i915_address_space_init(&ggtt->vm, dev_priv, "[global]");
 	if (!HAS_LLC(dev_priv) && !USES_PPGTT(dev_priv))
 		ggtt->vm.mm.color_adjust = i915_gtt_color_adjust;
 	mutex_unlock(&dev_priv->drm.struct_mutex);

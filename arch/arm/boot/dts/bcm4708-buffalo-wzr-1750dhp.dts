@@ -146,7 +146,3 @@
 &spi_nor {
 	status = "okay";
 };
-
-&usb3_phy {
-	status = "okay";
-};

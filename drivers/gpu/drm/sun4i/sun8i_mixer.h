@@ -29,20 +29,33 @@
 
 #define SUN8I_MIXER_GLOBAL_DBUFF_ENABLE		BIT(0)
 
-#define SUN8I_MIXER_BLEND_PIPE_CTL		0x1000
-#define SUN8I_MIXER_BLEND_ATTR_FCOLOR(x)	(0x1004 + 0x10 * (x) + 0x0)
-#define SUN8I_MIXER_BLEND_ATTR_INSIZE(x)	(0x1004 + 0x10 * (x) + 0x4)
-#define SUN8I_MIXER_BLEND_ATTR_COORD(x)		(0x1004 + 0x10 * (x) + 0x8)
-#define SUN8I_MIXER_BLEND_ROUTE			0x1080
-#define SUN8I_MIXER_BLEND_PREMULTIPLY		0x1084
-#define SUN8I_MIXER_BLEND_BKCOLOR		0x1088
-#define SUN8I_MIXER_BLEND_OUTSIZE		0x108c
-#define SUN8I_MIXER_BLEND_MODE(x)		(0x1090 + 0x04 * (x))
-#define SUN8I_MIXER_BLEND_CK_CTL		0x10b0
-#define SUN8I_MIXER_BLEND_CK_CFG		0x10b4
-#define SUN8I_MIXER_BLEND_CK_MAX(x)		(0x10c0 + 0x04 * (x))
-#define SUN8I_MIXER_BLEND_CK_MIN(x)		(0x10e0 + 0x04 * (x))
-#define SUN8I_MIXER_BLEND_OUTCTL		0x10fc
+#define DE2_BLD_BASE				0x1000
+#define DE2_CH_BASE				0x2000
+#define DE2_CH_SIZE				0x1000
+
+#define DE3_BLD_BASE				0x0800
+#define DE3_CH_BASE				0x1000
+#define DE3_CH_SIZE				0x0800
+
+#define SUN8I_MIXER_BLEND_PIPE_CTL(base)	(base + 0)
+#define SUN8I_MIXER_BLEND_ATTR_FCOLOR(base, x)	(base + 0x4 + 0x10 * (x) + 0x0)
+#define SUN8I_MIXER_BLEND_ATTR_INSIZE(base, x)	(base + 0x4 + 0x10 * (x) + 0x4)
+#define SUN8I_MIXER_BLEND_ATTR_COORD(base, x)	(base + 0x4 + 0x10 * (x) + 0x8)
+#define SUN8I_MIXER_BLEND_ROUTE(base)		(base + 0x80)
+#define SUN8I_MIXER_BLEND_PREMULTIPLY(base)	(base + 0x84)
+#define SUN8I_MIXER_BLEND_BKCOLOR(base)		(base + 0x88)
+#define SUN8I_MIXER_BLEND_OUTSIZE(base)		(base + 0x8c)
+#define SUN8I_MIXER_BLEND_MODE(base, x)		(base + 0x90 + 0x04 * (x))
+#define SUN8I_MIXER_BLEND_CK_CTL(base)		(base + 0xb0)
+#define SUN8I_MIXER_BLEND_CK_CFG(base)		(base + 0xb4)
+#define SUN8I_MIXER_BLEND_CK_MAX(base, x)	(base + 0xc0 + 0x04 * (x))
+#define SUN8I_MIXER_BLEND_CK_MIN(base, x)	(base + 0xe0 + 0x04 * (x))
+#define SUN8I_MIXER_BLEND_OUTCTL(base)		(base + 0xfc)
+#define SUN8I_MIXER_BLEND_CSC_CTL(base)		(base + 0x100)
+#define SUN8I_MIXER_BLEND_CSC_COEFF(base, layer, x, y) \
+	(base + 0x110 + layer * 0x30 +  x * 0x10 + 4 * y)
+#define SUN8I_MIXER_BLEND_CSC_CONST(base, layer, i) \
+	(base + 0x110 + layer * 0x30 +  i * 0x10 + 0x0c)
 
 #define SUN8I_MIXER_BLEND_PIPE_CTL_EN_MSK	GENMASK(12, 8)
 #define SUN8I_MIXER_BLEND_PIPE_CTL_EN(pipe)	BIT(8 + pipe)
@@ -56,6 +69,9 @@
 #define SUN8I_MIXER_BLEND_ROUTE_PIPE_SHIFT(n)	((n) << 2)
 
 #define SUN8I_MIXER_BLEND_OUTCTL_INTERLACED	BIT(1)
+
+#define SUN8I_MIXER_BLEND_CSC_CTL_EN(ch)	BIT(ch)
+#define SUN8I_MIXER_BLEND_CSC_CONST_VAL(d, c)	((d << 16) | (c & 0xffff))
 
 #define SUN8I_MIXER_FBFMT_ARGB8888	0
 #define SUN8I_MIXER_FBFMT_ABGR8888	1
@@ -127,6 +143,8 @@ struct de2_fmt_info {
  *	are invalid.
  * @mod_rate: module clock rate that needs to be set in order to have
  *	a functional block.
+ * @is_de3: true, if this is next gen display engine 3.0, false otherwise.
+ * @index: mixer index, needed to properly set TCON TOP
  */
 struct sun8i_mixer_cfg {
 	int		vi_num;
@@ -134,6 +152,8 @@ struct sun8i_mixer_cfg {
 	int		scaler_mask;
 	int		ccsc;
 	unsigned long	mod_rate;
+	bool		is_de3;
+	int		index;
 };
 
 struct sun8i_mixer {
@@ -151,6 +171,21 @@ static inline struct sun8i_mixer *
 engine_to_sun8i_mixer(struct sunxi_engine *engine)
 {
 	return container_of(engine, struct sun8i_mixer, engine);
+}
+
+static inline u32
+sun8i_blender_base(struct sun8i_mixer *mixer)
+{
+	return mixer->cfg->is_de3 ? DE3_BLD_BASE : DE2_BLD_BASE;
+}
+
+static inline u32
+sun8i_channel_base(struct sun8i_mixer *mixer, int channel)
+{
+	if (mixer->cfg->is_de3)
+		return DE3_CH_BASE + channel * DE3_CH_SIZE;
+	else
+		return DE2_CH_BASE + channel * DE2_CH_SIZE;
 }
 
 const struct de2_fmt_info *sun8i_mixer_format_info(u32 format);

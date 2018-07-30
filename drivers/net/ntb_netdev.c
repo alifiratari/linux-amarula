@@ -236,7 +236,7 @@ static void ntb_netdev_tx_timer(struct timer_list *t)
 	struct net_device *ndev = dev->ndev;
 
 	if (ntb_transport_tx_free_entry(dev->qp) < tx_stop) {
-		mod_timer(&dev->tx_timer, jiffies + usecs_to_jiffies(tx_time));
+		mod_timer(&dev->tx_timer, jiffies + msecs_to_jiffies(tx_time));
 	} else {
 		/* Make sure anybody stopping the queue after this sees the new
 		 * value of ntb_transport_tx_free_entry()
@@ -430,7 +430,7 @@ static int ntb_netdev_probe(struct device *client_dev)
 	ndev->hw_features = ndev->features;
 	ndev->watchdog_timeo = msecs_to_jiffies(NTB_TX_TIMEOUT_MS);
 
-	eth_random_addr(ndev->perm_addr);
+	random_ether_addr(ndev->perm_addr);
 	memcpy(ndev->dev_addr, ndev->perm_addr, ndev->addr_len);
 
 	ndev->netdev_ops = &ntb_netdev_ops;

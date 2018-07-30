@@ -605,6 +605,7 @@ static int rtw_sdio_resume(struct device *dev)
 {
 	struct sdio_func *func =dev_to_sdio_func(dev);
 	struct dvobj_priv *psdpriv = sdio_get_drvdata(func);
+	struct pwrctrl_priv *pwrpriv = dvobj_to_pwrctl(psdpriv);
 	struct adapter *padapter = psdpriv->if1;
 	struct mlme_ext_priv *pmlmeext = &padapter->mlmeextpriv;
 	int ret = 0;
@@ -614,11 +615,25 @@ static int rtw_sdio_resume(struct device *dev)
 
 	pdbgpriv->dbg_resume_cnt++;
 
-	ret = rtw_resume_process(padapter);
-
+	if (pwrpriv->bInternalAutoSuspend)
+	{
+		ret = rtw_resume_process(padapter);
+	}
+	else
+	{
+		if (pwrpriv->wowlan_mode || pwrpriv->wowlan_ap_mode)
+		{
+			ret = rtw_resume_process(padapter);
+		}
+		else
+		{
+			ret = rtw_resume_process(padapter);
+		}
+	}
 	pmlmeext->last_scan_time = jiffies;
 	DBG_871X("<========  %s return %d\n", __func__, ret);
 	return ret;
+
 }
 
 static int __init rtw_drv_entry(void)

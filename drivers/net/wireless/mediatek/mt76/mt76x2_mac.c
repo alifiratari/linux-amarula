@@ -269,31 +269,21 @@ static void mt76x2_remove_hdr_pad(struct sk_buff *skb, int len)
 	skb_pull(skb, len);
 }
 
-static struct mt76x2_sta *
-mt76x2_rx_get_sta(struct mt76x2_dev *dev, u8 idx)
+static struct mt76_wcid *
+mt76x2_rx_get_sta_wcid(struct mt76x2_dev *dev, u8 idx, bool unicast)
 {
+	struct mt76x2_sta *sta;
 	struct mt76_wcid *wcid;
 
 	if (idx >= ARRAY_SIZE(dev->wcid))
 		return NULL;
 
 	wcid = rcu_dereference(dev->wcid[idx]);
-	if (!wcid)
-		return NULL;
+	if (unicast || !wcid)
+		return wcid;
 
-	return container_of(wcid, struct mt76x2_sta, wcid);
-}
-
-static struct mt76_wcid *
-mt76x2_rx_get_sta_wcid(struct mt76x2_dev *dev, struct mt76x2_sta *sta, bool unicast)
-{
-	if (!sta)
-		return NULL;
-
-	if (unicast)
-		return &sta->wcid;
-	else
-		return &sta->vif->group_wcid;
+	sta = container_of(wcid, struct mt76x2_sta, wcid);
+	return &sta->vif->group_wcid;
 }
 
 int mt76x2_mac_process_rx(struct mt76x2_dev *dev, struct sk_buff *skb,
@@ -301,7 +291,6 @@ int mt76x2_mac_process_rx(struct mt76x2_dev *dev, struct sk_buff *skb,
 {
 	struct mt76_rx_status *status = (struct mt76_rx_status *) skb->cb;
 	struct mt76x2_rxwi *rxwi = rxi;
-	struct mt76x2_sta *sta;
 	u32 rxinfo = le32_to_cpu(rxwi->rxinfo);
 	u32 ctl = le32_to_cpu(rxwi->ctl);
 	u16 rate = le16_to_cpu(rxwi->rate);
@@ -326,8 +315,7 @@ int mt76x2_mac_process_rx(struct mt76x2_dev *dev, struct sk_buff *skb,
 	}
 
 	wcid = FIELD_GET(MT_RXWI_CTL_WCID, ctl);
-	sta = mt76x2_rx_get_sta(dev, wcid);
-	status->wcid = mt76x2_rx_get_sta_wcid(dev, sta, unicast);
+	status->wcid = mt76x2_rx_get_sta_wcid(dev, wcid, unicast);
 
 	len = FIELD_GET(MT_RXWI_CTL_MPDU_LEN, ctl);
 	pn_len = FIELD_GET(MT_RXINFO_PN_LEN, rxinfo);
@@ -372,11 +360,6 @@ int mt76x2_mac_process_rx(struct mt76x2_dev *dev, struct sk_buff *skb,
 
 	status->tid = FIELD_GET(MT_RXWI_TID, tid_sn);
 	status->seqno = FIELD_GET(MT_RXWI_SN, tid_sn);
-
-	if (sta) {
-		ewma_signal_add(&sta->rssi, status->signal);
-		sta->inactive_count = 0;
-	}
 
 	return mt76x2_mac_process_rate(status, rate);
 }
@@ -456,13 +439,15 @@ mt76x2_mac_fill_tx_status(struct mt76x2_dev *dev,
 	if (last_rate < IEEE80211_TX_MAX_RATES - 1)
 		rate[last_rate + 1].idx = -1;
 
-	cur_idx = rate[last_rate].idx + last_rate;
+	cur_idx = rate[last_rate].idx + st->retry;
 	for (i = 0; i <= last_rate; i++) {
 		rate[i].flags = rate[last_rate].flags;
 		rate[i].idx = max_t(int, 0, cur_idx - i);
 		rate[i].count = 1;
 	}
-	rate[last_rate].count = st->retry + 1 - last_rate;
+
+	if (last_rate > 0)
+		rate[last_rate - 1].count = st->retry + 1 - last_rate;
 
 	info->status.ampdu_len = n_frames;
 	info->status.ampdu_ack_len = st->success ? n_frames : 0;

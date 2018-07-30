@@ -198,16 +198,7 @@ int i2c_generic_scl_recovery(struct i2c_adapter *adap)
 
 		val = !val;
 		bri->set_scl(adap, val);
-
-		/*
-		 * If we can set SDA, we will always create STOP here to ensure
-		 * the additional pulses will do no harm. This is achieved by
-		 * letting SDA follow SCL half a cycle later.
-		 */
-		ndelay(RECOVERY_NDELAY / 2);
-		if (bri->set_sda)
-			bri->set_sda(adap, val);
-		ndelay(RECOVERY_NDELAY / 2);
+		ndelay(RECOVERY_NDELAY);
 	}
 
 	/* check if recovery actually succeeded */

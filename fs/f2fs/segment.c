@@ -274,14 +274,11 @@ next:
 	return err;
 }
 
-void f2fs_disable_atomic_write(struct f2fs_sb_info *sbi)
+void f2fs_drop_inmem_pages_all(struct f2fs_sb_info *sbi, bool gc_failure)
 {
 	struct list_head *head = &sbi->inode_list[ATOMIC_FILE];
 	struct inode *inode;
 	struct f2fs_inode_info *fi;
-
-	/* just turn it off */
-	set_sbi_flag(sbi, SBI_DISABLE_ATOMIC_WRITE);
 next:
 	spin_lock(&sbi->inode_lock[ATOMIC_FILE]);
 	if (list_empty(head)) {
@@ -293,16 +290,17 @@ next:
 	spin_unlock(&sbi->inode_lock[ATOMIC_FILE]);
 
 	if (inode) {
-		inode_lock(inode);
-		/* need to check whether it was already revoked */
-		if (f2fs_is_atomic_file(inode)) {
-			f2fs_drop_inmem_pages(inode);
-			set_inode_flag(inode, FI_ATOMIC_REVOKE_REQUEST);
+		if (gc_failure) {
+			if (fi->i_gc_failures[GC_FAILURE_ATOMIC])
+				goto drop;
+			goto skip;
 		}
-		inode_unlock(inode);
+drop:
+		set_inode_flag(inode, FI_ATOMIC_REVOKE_REQUEST);
+		f2fs_drop_inmem_pages(inode);
 		iput(inode);
 	}
-
+skip:
 	congestion_wait(BLK_RW_ASYNC, HZ/50);
 	cond_resched();
 	goto next;
@@ -322,6 +320,7 @@ void f2fs_drop_inmem_pages(struct inode *inode)
 	mutex_unlock(&fi->inmem_lock);
 
 	clear_inode_flag(inode, FI_ATOMIC_FILE);
+	fi->i_gc_failures[GC_FAILURE_ATOMIC] = 0;
 	stat_dec_atomic_write(inode);
 }
 

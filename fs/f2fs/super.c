@@ -57,7 +57,8 @@ char *fault_name[FAULT_MAX] = {
 	[FAULT_CHECKPOINT]	= "checkpoint error",
 };
 
-void f2fs_build_fault_attr(struct f2fs_sb_info *sbi, unsigned int rate)
+static void f2fs_build_fault_attr(struct f2fs_sb_info *sbi,
+						unsigned int rate)
 {
 	struct f2fs_fault_info *ffi = &F2FS_OPTION(sbi).fault_info;
 
@@ -1378,14 +1379,15 @@ static void default_options(struct f2fs_sb_info *sbi)
 	set_opt(sbi, POSIX_ACL);
 #endif
 
+#ifdef CONFIG_F2FS_FAULT_INJECTION
 	f2fs_build_fault_attr(sbi, 0);
+#endif
 }
 
 #ifdef CONFIG_QUOTA
 static int f2fs_enable_quotas(struct super_block *sb);
 #endif
-static int f2fs_remount(struct super_block *sb, int *flags,
-			char *data, size_t data_size)
+static int f2fs_remount(struct super_block *sb, int *flags, char *data)
 {
 	struct f2fs_sb_info *sbi = F2FS_SB(sb);
 	struct f2fs_mount_info org_mount_opt;
@@ -1451,7 +1453,7 @@ static int f2fs_remount(struct super_block *sb, int *flags,
 		err = dquot_suspend(sb, -1);
 		if (err < 0)
 			goto restore_opts;
-	} else if (f2fs_readonly(sb) && !(*flags & SB_RDONLY)) {
+	} else if (f2fs_readonly(sb) && !(*flags & MS_RDONLY)) {
 		/* dquot_resume needs RW */
 		sb->s_flags &= ~SB_RDONLY;
 		if (sb_any_quota_suspended(sb)) {
@@ -2651,8 +2653,7 @@ static void f2fs_tuning_parameters(struct f2fs_sb_info *sbi)
 	}
 }
 
-static int f2fs_fill_super(struct super_block *sb, void *data, size_t data_size,
-			   int silent)
+static int f2fs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct f2fs_sb_info *sbi;
 	struct f2fs_super_block *raw_super;
@@ -3080,28 +3081,17 @@ free_sbi:
 }
 
 static struct dentry *f2fs_mount(struct file_system_type *fs_type, int flags,
-			const char *dev_name, void *data, size_t data_size)
+			const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  f2fs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, f2fs_fill_super);
 }
 
 static void kill_f2fs_super(struct super_block *sb)
 {
 	if (sb->s_root) {
-		struct f2fs_sb_info *sbi = F2FS_SB(sb);
-
-		set_sbi_flag(sbi, SBI_IS_CLOSE);
-		f2fs_stop_gc_thread(sbi);
-		f2fs_stop_discard_thread(sbi);
-
-		if (is_sbi_flag_set(sbi, SBI_IS_DIRTY) ||
-				!is_set_ckpt_flags(sbi, CP_UMOUNT_FLAG)) {
-			struct cp_control cpc = {
-				.reason = CP_UMOUNT,
-			};
-			f2fs_write_checkpoint(sbi, &cpc);
-		}
+		set_sbi_flag(F2FS_SB(sb), SBI_IS_CLOSE);
+		f2fs_stop_gc_thread(F2FS_SB(sb));
+		f2fs_stop_discard_thread(F2FS_SB(sb));
 	}
 	kill_block_super(sb);
 }

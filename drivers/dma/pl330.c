@@ -1046,16 +1046,13 @@ static bool _start(struct pl330_thread *thrd)
 
 		if (_state(thrd) == PL330_STATE_KILLING)
 			UNTIL(thrd, PL330_STATE_STOPPED)
-		/* fall through */
 
 	case PL330_STATE_FAULTING:
 		_stop(thrd);
-		/* fall through */
 
 	case PL330_STATE_KILLING:
 	case PL330_STATE_COMPLETING:
 		UNTIL(thrd, PL330_STATE_STOPPED)
-		/* fall through */
 
 	case PL330_STATE_STOPPED:
 		return _trigger(thrd);
@@ -1782,6 +1779,8 @@ static inline void _free_event(struct pl330_thread *thrd, int ev)
 
 static void pl330_release_channel(struct pl330_thread *thrd)
 {
+	struct pl330_dmac *pl330;
+
 	if (!thrd || thrd->free)
 		return;
 
@@ -1789,6 +1788,8 @@ static void pl330_release_channel(struct pl330_thread *thrd)
 
 	dma_pl330_rqcb(thrd->req[1 - thrd->lstenq].desc, PL330_ERR_ABORT);
 	dma_pl330_rqcb(thrd->req[thrd->lstenq].desc, PL330_ERR_ABORT);
+
+	pl330 = thrd->dmac;
 
 	_free_event(thrd, thrd->ev);
 	thrd->free = true;
@@ -3032,7 +3033,7 @@ pl330_probe(struct amba_device *adev, const struct amba_id *id)
 	pd->src_addr_widths = PL330_DMA_BUSWIDTHS;
 	pd->dst_addr_widths = PL330_DMA_BUSWIDTHS;
 	pd->directions = BIT(DMA_DEV_TO_MEM) | BIT(DMA_MEM_TO_DEV);
-	pd->residue_granularity = DMA_RESIDUE_GRANULARITY_BURST;
+	pd->residue_granularity = DMA_RESIDUE_GRANULARITY_SEGMENT;
 	pd->max_burst = ((pl330->quirks & PL330_QUIRK_BROKEN_NO_FLUSHP) ?
 			 1 : PL330_MAX_BURST);
 

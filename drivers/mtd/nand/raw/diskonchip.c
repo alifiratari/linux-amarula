@@ -1291,7 +1291,7 @@ static int __init nftl_scan_bbt(struct mtd_info *mtd)
 		this->bbt_md = NULL;
 	}
 
-	ret = nand_create_bbt(this);
+	ret = this->scan_bbt(mtd);
 	if (ret)
 		return ret;
 
@@ -1338,7 +1338,7 @@ static int __init inftl_scan_bbt(struct mtd_info *mtd)
 		this->bbt_md->pattern = "TBB_SYSM";
 	}
 
-	ret = nand_create_bbt(this);
+	ret = this->scan_bbt(mtd);
 	if (ret)
 		return ret;
 

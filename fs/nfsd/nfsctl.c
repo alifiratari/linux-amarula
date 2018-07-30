@@ -1144,8 +1144,7 @@ static ssize_t write_v4_end_grace(struct file *file, char *buf, size_t size)
  *	populating the filesystem.
  */
 
-static int nfsd_fill_super(struct super_block * sb,
-			   void * data, size_t data_size, int silent)
+static int nfsd_fill_super(struct super_block * sb, void * data, int silent)
 {
 	static const struct tree_descr nfsd_files[] = {
 		[NFSD_List] = {"exports", &exports_nfsd_operations, S_IRUGO},
@@ -1180,11 +1179,10 @@ static int nfsd_fill_super(struct super_block * sb,
 }
 
 static struct dentry *nfsd_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
 	struct net *net = current->nsproxy->net_ns;
-	return mount_ns(fs_type, flags, data, data_size,
-			net, net->user_ns, nfsd_fill_super);
+	return mount_ns(fs_type, flags, data, net, net->user_ns, nfsd_fill_super);
 }
 
 static void nfsd_umount(struct super_block *sb)
@@ -1239,12 +1237,10 @@ static __net_init int nfsd_init_net(struct net *net)
 	retval = nfsd_idmap_init(net);
 	if (retval)
 		goto out_idmap_error;
-	nn->nfsd4_lease = 45;	/* default lease time */
-	nn->nfsd4_grace = 45;
-	nn->somebody_reclaimed = false;
+	nn->nfsd4_lease = 90;	/* default lease time */
+	nn->nfsd4_grace = 90;
 	nn->clverifier_counter = prandom_u32();
 	nn->clientid_counter = prandom_u32();
-	nn->s2s_cp_cl_id = nn->clientid_counter++;
 
 	atomic_set(&nn->ntf_refcnt, 0);
 	init_waitqueue_head(&nn->ntf_wq);

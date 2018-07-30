@@ -589,7 +589,7 @@ bool __skb_flow_dissect(const struct sk_buff *skb,
 	struct flow_dissector_key_tags *key_tags;
 	struct flow_dissector_key_vlan *key_vlan;
 	enum flow_dissect_ret fdret;
-	enum flow_dissector_key_id dissector_vlan = FLOW_DISSECTOR_KEY_MAX;
+	bool skip_vlan = false;
 	int num_hdrs = 0;
 	u8 ip_proto = 0;
 	bool ret;
@@ -748,14 +748,14 @@ proto_again:
 	}
 	case htons(ETH_P_8021AD):
 	case htons(ETH_P_8021Q): {
-		const struct vlan_hdr *vlan = NULL;
+		const struct vlan_hdr *vlan;
 		struct vlan_hdr _vlan;
-		__be16 saved_vlan_tpid = proto;
+		bool vlan_tag_present = skb && skb_vlan_tag_present(skb);
 
-		if (dissector_vlan == FLOW_DISSECTOR_KEY_MAX &&
-		    skb && skb_vlan_tag_present(skb)) {
+		if (vlan_tag_present)
 			proto = skb->protocol;
-		} else {
+
+		if (!vlan_tag_present || eth_type_vlan(skb->protocol)) {
 			vlan = __skb_header_pointer(skb, nhoff, sizeof(_vlan),
 						    data, hlen, &_vlan);
 			if (!vlan) {
@@ -765,23 +765,20 @@ proto_again:
 
 			proto = vlan->h_vlan_encapsulated_proto;
 			nhoff += sizeof(*vlan);
+			if (skip_vlan) {
+				fdret = FLOW_DISSECT_RET_PROTO_AGAIN;
+				break;
+			}
 		}
 
-		if (dissector_vlan == FLOW_DISSECTOR_KEY_MAX) {
-			dissector_vlan = FLOW_DISSECTOR_KEY_VLAN;
-		} else if (dissector_vlan == FLOW_DISSECTOR_KEY_VLAN) {
-			dissector_vlan = FLOW_DISSECTOR_KEY_CVLAN;
-		} else {
-			fdret = FLOW_DISSECT_RET_PROTO_AGAIN;
-			break;
-		}
-
-		if (dissector_uses_key(flow_dissector, dissector_vlan)) {
+		skip_vlan = true;
+		if (dissector_uses_key(flow_dissector,
+				       FLOW_DISSECTOR_KEY_VLAN)) {
 			key_vlan = skb_flow_dissector_target(flow_dissector,
-							     dissector_vlan,
+							     FLOW_DISSECTOR_KEY_VLAN,
 							     target_container);
 
-			if (!vlan) {
+			if (vlan_tag_present) {
 				key_vlan->vlan_id = skb_vlan_tag_get_id(skb);
 				key_vlan->vlan_priority =
 					(skb_vlan_tag_get_prio(skb) >> VLAN_PRIO_SHIFT);
@@ -792,7 +789,6 @@ proto_again:
 					(ntohs(vlan->h_vlan_TCI) &
 					 VLAN_PRIO_MASK) >> VLAN_PRIO_SHIFT;
 			}
-			key_vlan->vlan_tpid = saved_vlan_tpid;
 		}
 
 		fdret = FLOW_DISSECT_RET_PROTO_AGAIN;

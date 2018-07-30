@@ -93,7 +93,7 @@ static inline void kfree_call_rcu(struct rcu_head *head,
 #define rcu_note_context_switch(preempt) \
 	do { \
 		rcu_sched_qs(); \
-		rcu_tasks_qs(current); \
+		rcu_note_voluntary_context_switch_lite(current); \
 	} while (0)
 
 static inline int rcu_needs_cpu(u64 basemono, u64 *nextevt)

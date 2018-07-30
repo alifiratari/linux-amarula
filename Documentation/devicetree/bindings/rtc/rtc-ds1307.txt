@@ -13,7 +13,6 @@ Required properties:
 	"maxim,ds3231",
 	"st,m41t0",
 	"st,m41t00",
-	"st,m41t11",
 	"microchip,mcp7940x",
 	"microchip,mcp7941x",
 	"pericom,pt7c4338",

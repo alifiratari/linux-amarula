@@ -35,12 +35,10 @@ struct blk_mq_hw_ctx {
 	struct sbitmap		ctx_map;
 
 	struct blk_mq_ctx	*dispatch_from;
-	unsigned int		dispatch_busy;
 
-	unsigned int		nr_ctx;
 	struct blk_mq_ctx	**ctxs;
+	unsigned int		nr_ctx;
 
-	spinlock_t		dispatch_wait_lock;
 	wait_queue_entry_t	dispatch_wait;
 	atomic_t		wait_index;
 

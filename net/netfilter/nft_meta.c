@@ -107,8 +107,7 @@ static void nft_meta_get_eval(const struct nft_expr *expr,
 		break;
 	case NFT_META_SKUID:
 		sk = skb_to_full_sk(skb);
-		if (!sk || !sk_fullsock(sk) ||
-		    !net_eq(nft_net(pkt), sock_net(sk)))
+		if (!sk || !sk_fullsock(sk))
 			goto err;
 
 		read_lock_bh(&sk->sk_callback_lock);
@@ -124,8 +123,7 @@ static void nft_meta_get_eval(const struct nft_expr *expr,
 		break;
 	case NFT_META_SKGID:
 		sk = skb_to_full_sk(skb);
-		if (!sk || !sk_fullsock(sk) ||
-		    !net_eq(nft_net(pkt), sock_net(sk)))
+		if (!sk || !sk_fullsock(sk))
 			goto err;
 
 		read_lock_bh(&sk->sk_callback_lock);
@@ -216,8 +214,7 @@ static void nft_meta_get_eval(const struct nft_expr *expr,
 #ifdef CONFIG_CGROUP_NET_CLASSID
 	case NFT_META_CGROUP:
 		sk = skb_to_full_sk(skb);
-		if (!sk || !sk_fullsock(sk) ||
-		    !net_eq(nft_net(pkt), sock_net(sk)))
+		if (!sk || !sk_fullsock(sk))
 			goto err;
 		*dest = sock_cgroup_classid(&sk->sk_cgrp_data);
 		break;

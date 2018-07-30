@@ -262,7 +262,8 @@ int pcm1789_common_exit(struct device *dev)
 {
 	struct pcm1789_private *priv = dev_get_drvdata(dev);
 
-	flush_work(&priv->work);
+	if (&priv->work)
+		flush_work(&priv->work);
 
 	return 0;
 }

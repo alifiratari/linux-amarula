@@ -155,11 +155,16 @@ struct wilc {
 	u32 rx_buffer_offset;
 	u8 *tx_buffer;
 
-	struct txq_entry_t txq_head;
+	unsigned long txq_spinlock_flags;
+
+	struct txq_entry_t *txq_head;
+	struct txq_entry_t *txq_tail;
 	int txq_entries;
 	int txq_exit;
 
-	struct rxq_entry_t rxq_head;
+	struct rxq_entry_t *rxq_head;
+	struct rxq_entry_t *rxq_tail;
+	int rxq_entries;
 	int rxq_exit;
 
 	unsigned char eth_src_address[NUM_CONCURRENT_IFC][6];

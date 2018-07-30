@@ -53,7 +53,6 @@ struct msg_msg;
 struct xattr;
 struct xfrm_sec_ctx;
 struct mm_struct;
-struct fs_context;
 
 /* If capable should audit the security request */
 #define SECURITY_CAP_NOAUDIT 0
@@ -160,27 +159,6 @@ extern int mmap_min_addr_handler(struct ctl_table *table, int write,
 typedef int (*initxattrs) (struct inode *inode,
 			   const struct xattr *xattr_array, void *fs_data);
 
-
-/* Keep the kernel_load_data_id enum in sync with kernel_read_file_id */
-#define __data_id_enumify(ENUM, dummy) LOADING_ ## ENUM,
-#define __data_id_stringify(dummy, str) #str,
-
-enum kernel_load_data_id {
-	__kernel_read_file_id(__data_id_enumify)
-};
-
-static const char * const kernel_load_data_str[] = {
-	__kernel_read_file_id(__data_id_stringify)
-};
-
-static inline const char *kernel_load_data_id_str(enum kernel_load_data_id id)
-{
-	if ((unsigned)id >= LOADING_MAX_ID)
-		return kernel_load_data_str[LOADING_UNKNOWN];
-
-	return kernel_load_data_str[id];
-}
-
 #ifdef CONFIG_SECURITY
 
 struct security_mnt_opts {
@@ -247,24 +225,15 @@ int security_bprm_set_creds(struct linux_binprm *bprm);
 int security_bprm_check(struct linux_binprm *bprm);
 void security_bprm_committing_creds(struct linux_binprm *bprm);
 void security_bprm_committed_creds(struct linux_binprm *bprm);
-int security_fs_context_alloc(struct fs_context *fc, struct dentry *reference);
-int security_fs_context_dup(struct fs_context *fc, struct fs_context *src_fc);
-void security_fs_context_free(struct fs_context *fc);
-int security_fs_context_parse_source(struct fs_context *fc, char *src);
-int security_fs_context_parse_option(struct fs_context *fc, char *opt, size_t len);
-int security_fs_context_validate(struct fs_context *fc);
-int security_sb_get_tree(struct fs_context *fc);
-void security_sb_reconfigure(struct fs_context *fc);
-int security_sb_mountpoint(struct fs_context *fc, struct path *mountpoint,
-			   unsigned int mnt_flags);
 int security_sb_alloc(struct super_block *sb);
 void security_sb_free(struct super_block *sb);
-int security_sb_copy_data(char *orig, size_t orig_size, char *copy);
-int security_sb_remount(struct super_block *sb, void *data, size_t data_size);
+int security_sb_copy_data(char *orig, char *copy);
+int security_sb_remount(struct super_block *sb, void *data);
+int security_sb_kern_mount(struct super_block *sb, int flags, void *data);
 int security_sb_show_options(struct seq_file *m, struct super_block *sb);
 int security_sb_statfs(struct dentry *dentry);
 int security_sb_mount(const char *dev_name, const struct path *path,
-		      const char *type, unsigned long flags, void *data, size_t data_size);
+		      const char *type, unsigned long flags, void *data);
 int security_sb_umount(struct vfsmount *mnt, int flags);
 int security_sb_pivotroot(const struct path *old_path, const struct path *new_path);
 int security_sb_set_mnt_opts(struct super_block *sb,
@@ -276,7 +245,6 @@ int security_sb_clone_mnt_opts(const struct super_block *oldsb,
 				unsigned long kern_flags,
 				unsigned long *set_kern_flags);
 int security_sb_parse_opts_str(char *options, struct security_mnt_opts *opts);
-int security_move_mount(const struct path *from_path, const struct path *to_path);
 int security_dentry_init_security(struct dentry *dentry, int mode,
 					const struct qstr *name, void **ctx,
 					u32 *ctxlen);
@@ -352,7 +320,6 @@ void security_cred_getsecid(const struct cred *c, u32 *secid);
 int security_kernel_act_as(struct cred *new, u32 secid);
 int security_kernel_create_files_as(struct cred *new, struct inode *inode);
 int security_kernel_module_request(char *kmod_name);
-int security_kernel_load_data(enum kernel_load_data_id id);
 int security_kernel_read_file(struct file *file, enum kernel_read_file_id id);
 int security_kernel_post_read_file(struct file *file, char *buf, loff_t size,
 				   enum kernel_read_file_id id);
@@ -558,44 +525,6 @@ static inline void security_bprm_committed_creds(struct linux_binprm *bprm)
 {
 }
 
-static inline int security_fs_context_alloc(struct fs_context *fc,
-					    struct dentry *reference)
-{
-	return 0;
-}
-static inline int security_fs_context_dup(struct fs_context *fc,
-					  struct fs_context *src_fc)
-{
-	return 0;
-}
-static inline void security_fs_context_free(struct fs_context *fc)
-{
-}
-static inline int security_fs_context_parse_source(struct fs_context *fc, char *src)
-{
-	return 0;
-}
-static inline int security_fs_context_parse_option(struct fs_context *fc, char *opt, size_t len)
-{
-	return 0;
-}
-static inline int security_fs_context_validate(struct fs_context *fc)
-{
-	return 0;
-}
-static inline int security_sb_get_tree(struct fs_context *fc)
-{
-	return 0;
-}
-static inline void security_sb_reconfigure(struct fs_context *fc)
-{
-}
-static inline int security_sb_mountpoint(struct fs_context *fc, struct path *mountpoint,
-					 unsigned int mnt_flags)
-{
-	return 0;
-}
-
 static inline int security_sb_alloc(struct super_block *sb)
 {
 	return 0;
@@ -604,12 +533,17 @@ static inline int security_sb_alloc(struct super_block *sb)
 static inline void security_sb_free(struct super_block *sb)
 { }
 
-static inline int security_sb_copy_data(char *orig, size_t orig_size, char *copy)
+static inline int security_sb_copy_data(char *orig, char *copy)
 {
 	return 0;
 }
 
-static inline int security_sb_remount(struct super_block *sb, void *data, size_t data_size)
+static inline int security_sb_remount(struct super_block *sb, void *data)
+{
+	return 0;
+}
+
+static inline int security_sb_kern_mount(struct super_block *sb, int flags, void *data)
 {
 	return 0;
 }
@@ -627,7 +561,7 @@ static inline int security_sb_statfs(struct dentry *dentry)
 
 static inline int security_sb_mount(const char *dev_name, const struct path *path,
 				    const char *type, unsigned long flags,
-				    void *data, size_t data_size)
+				    void *data)
 {
 	return 0;
 }
@@ -660,12 +594,6 @@ static inline int security_sb_clone_mnt_opts(const struct super_block *oldsb,
 }
 
 static inline int security_sb_parse_opts_str(char *options, struct security_mnt_opts *opts)
-{
-	return 0;
-}
-
-static inline int security_move_mount(const struct path *from_path,
-				      const struct path *to_path)
 {
 	return 0;
 }
@@ -977,11 +905,6 @@ static inline int security_kernel_create_files_as(struct cred *cred,
 }
 
 static inline int security_kernel_module_request(char *kmod_name)
-{
-	return 0;
-}
-
-static inline int security_kernel_load_data(enum kernel_load_data_id id)
 {
 	return 0;
 }

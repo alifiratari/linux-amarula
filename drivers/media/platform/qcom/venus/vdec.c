@@ -14,7 +14,6 @@
  */
 #include <linux/clk.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
@@ -174,6 +173,8 @@ vdec_try_fmt_common(struct venus_inst *inst, struct v4l2_format *f)
 		else
 			return NULL;
 		fmt = find_format(inst, pixmp->pixelformat, f->type);
+		pixmp->width = 1280;
+		pixmp->height = 720;
 	}
 
 	pixmp->width = clamp(pixmp->width, inst->cap_width.min,

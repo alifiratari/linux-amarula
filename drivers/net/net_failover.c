@@ -115,8 +115,7 @@ static netdev_tx_t net_failover_start_xmit(struct sk_buff *skb,
 }
 
 static u16 net_failover_select_queue(struct net_device *dev,
-				     struct sk_buff *skb,
-				     struct net_device *sb_dev,
+				     struct sk_buff *skb, void *accel_priv,
 				     select_queue_fallback_t fallback)
 {
 	struct net_failover_info *nfo_info = netdev_priv(dev);
@@ -129,9 +128,9 @@ static u16 net_failover_select_queue(struct net_device *dev,
 
 		if (ops->ndo_select_queue)
 			txq = ops->ndo_select_queue(primary_dev, skb,
-						    sb_dev, fallback);
+						    accel_priv, fallback);
 		else
-			txq = fallback(primary_dev, skb, NULL);
+			txq = fallback(primary_dev, skb);
 
 		qdisc_skb_cb(skb)->slave_dev_queue_mapping = skb->queue_mapping;
 

@@ -147,28 +147,10 @@ enum imx274_mode {
 };
 
 /*
- * Parameters for each imx274 readout mode.
- *
- * These are the values to configure the sensor in one of the
- * implemented modes.
- *
- * @size: recommended recording pixels
- * @init_regs: registers to initialize the mode
- * @min_frame_len: Minimum frame length for each mode (see "Frame Rate
- *                 Adjustment (CSI-2)" in the datasheet)
- * @min_SHR: Minimum SHR register value (see "Shutter Setting (CSI-2)" in the
- *           datasheet)
- * @max_fps: Maximum frames per second
- * @nocpiop: Number of clocks per internal offset period (see "Integration Time
- *           in Each Readout Drive Mode (CSI-2)" in the datasheet)
+ * imx274 format related structure
  */
 struct imx274_frmfmt {
 	struct v4l2_frmsize_discrete size;
-	const struct reg_8 *init_regs;
-	int min_frame_len;
-	int min_SHR;
-	int max_fps;
-	int nocpiop;
 };
 
 /*
@@ -494,35 +476,58 @@ static const struct reg_8 imx274_tp_regs[] = {
 	{IMX274_TABLE_END, 0x00}
 };
 
-/* nocpiop happens to be the same number for the implemented modes */
+static const struct reg_8 *mode_table[] = {
+	[IMX274_MODE_3840X2160]		= imx274_mode1_3840x2160_raw10,
+	[IMX274_MODE_1920X1080]		= imx274_mode3_1920x1080_raw10,
+	[IMX274_MODE_1280X720]		= imx274_mode5_1280x720_raw10,
+};
+
+/*
+ * imx274 format related structure
+ */
 static const struct imx274_frmfmt imx274_formats[] = {
-	{
-		/* mode 1, 4K */
-		.size = {3840, 2160},
-		.init_regs = imx274_mode1_3840x2160_raw10,
-		.min_frame_len = 4550,
-		.min_SHR = 12,
-		.max_fps = 60,
-		.nocpiop = 112,
-	},
-	{
-		/* mode 3, 1080p */
-		.size = {1920, 1080},
-		.init_regs = imx274_mode3_1920x1080_raw10,
-		.min_frame_len = 2310,
-		.min_SHR = 8,
-		.max_fps = 120,
-		.nocpiop = 112,
-	},
-	{
-		/* mode 5, 720p */
-		.size = {1280, 720},
-		.init_regs = imx274_mode5_1280x720_raw10,
-		.min_frame_len = 2310,
-		.min_SHR = 8,
-		.max_fps = 120,
-		.nocpiop = 112,
-	},
+	{ {3840, 2160} },
+	{ {1920, 1080} },
+	{ {1280,  720} },
+};
+
+/*
+ * minimal frame length for each mode
+ * refer to datasheet section "Frame Rate Adjustment (CSI-2)"
+ */
+static const int min_frame_len[] = {
+	4550, /* mode 1, 4K */
+	2310, /* mode 3, 1080p */
+	2310 /* mode 5, 720p */
+};
+
+/*
+ * minimal numbers of SHR register
+ * refer to datasheet table "Shutter Setting (CSI-2)"
+ */
+static const int min_SHR[] = {
+	12, /* mode 1, 4K */
+	8, /* mode 3, 1080p */
+	8 /* mode 5, 720p */
+};
+
+static const int max_frame_rate[] = {
+	60, /* mode 1 , 4K */
+	120, /* mode 3, 1080p */
+	120 /* mode 5, 720p */
+};
+
+/*
+ * Number of clocks per internal offset period
+ * a constant based on mode
+ * refer to section "Integration Time in Each Readout Drive Mode (CSI-2)"
+ * in the datasheet
+ * for the implemented 3 modes, it happens to be the same number
+ */
+static const int nocpiop[] = {
+	112, /* mode 1 , 4K */
+	112, /* mode 3, 1080p */
+	112 /* mode 5, 720p */
 };
 
 /*
@@ -544,7 +549,7 @@ struct imx274_ctrls {
 /*
  * struct stim274 - imx274 device structure
  * @sd: V4L2 subdevice structure
- * @pad: Media pad structure
+ * @pd: Media pad structure
  * @client: Pointer to I2C client
  * @ctrls: imx274 control structure
  * @format: V4L2 media bus frame format structure
@@ -552,7 +557,7 @@ struct imx274_ctrls {
  * @regmap: Pointer to regmap structure
  * @reset_gpio: Pointer to reset gpio
  * @lock: Mutex structure
- * @mode: Parameters for the selected readout mode
+ * @mode_index: Resolution mode index
  */
 struct stimx274 {
 	struct v4l2_subdev sd;
@@ -564,7 +569,7 @@ struct stimx274 {
 	struct regmap *regmap;
 	struct gpio_desc *reset_gpio;
 	struct mutex lock; /* mutex lock for operations */
-	const struct imx274_frmfmt *mode;
+	u32 mode_index;
 };
 
 /*
@@ -597,18 +602,20 @@ static inline struct stimx274 *to_imx274(struct v4l2_subdev *sd)
 }
 
 /*
- * Writing a register table
- *
- * @priv: Pointer to device
- * @table: Table containing register values (with optional delays)
+ * imx274_regmap_util_write_table_8 - Function for writing register table
+ * @regmap: Pointer to device reg map structure
+ * @table: Table containing register values
+ * @wait_ms_addr: Flag for performing delay
+ * @end_addr: Flag for incating end of table
  *
  * This is used to write register table into sensor's reg map.
  *
  * Return: 0 on success, errors otherwise
  */
-static int imx274_write_table(struct stimx274 *priv, const struct reg_8 table[])
+static int imx274_regmap_util_write_table_8(struct regmap *regmap,
+					    const struct reg_8 table[],
+					    u16 wait_ms_addr, u16 end_addr)
 {
-	struct regmap *regmap = priv->regmap;
 	int err = 0;
 	const struct reg_8 *next;
 	u8 val;
@@ -620,8 +627,8 @@ static int imx274_write_table(struct stimx274 *priv, const struct reg_8 table[])
 
 	for (next = table;; next++) {
 		if ((next->addr != range_start + range_count) ||
-		    (next->addr == IMX274_TABLE_END) ||
-		    (next->addr == IMX274_TABLE_WAIT_MS) ||
+		    (next->addr == end_addr) ||
+		    (next->addr == wait_ms_addr) ||
 		    (range_count == max_range_vals)) {
 			if (range_count == 1)
 				err = regmap_write(regmap,
@@ -640,10 +647,10 @@ static int imx274_write_table(struct stimx274 *priv, const struct reg_8 table[])
 			range_count = 0;
 
 			/* Handle special address values */
-			if (next->addr == IMX274_TABLE_END)
+			if (next->addr == end_addr)
 				break;
 
-			if (next->addr == IMX274_TABLE_WAIT_MS) {
+			if (next->addr == wait_ms_addr) {
 				msleep_range(next->val);
 				continue;
 			}
@@ -690,13 +697,25 @@ static inline int imx274_write_reg(struct stimx274 *priv, u16 addr, u8 val)
 	return err;
 }
 
+static int imx274_write_table(struct stimx274 *priv, const struct reg_8 table[])
+{
+	return imx274_regmap_util_write_table_8(priv->regmap,
+		table, IMX274_TABLE_WAIT_MS, IMX274_TABLE_END);
+}
+
 /*
- * Set mode registers to start stream.
+ * imx274_mode_regs - Function for set mode registers per mode index
  * @priv: Pointer to device structure
+ * @mode: Mode index value
+ *
+ * This is used to start steam per mode index.
+ * mode = 0, start stream for sensor Mode 1: 4K/raw10
+ * mode = 1, start stream for sensor Mode 3: 1080p/raw10
+ * mode = 2, start stream for sensor Mode 5: 720p/raw10
  *
  * Return: 0 on success, errors otherwise
  */
-static int imx274_mode_regs(struct stimx274 *priv)
+static int imx274_mode_regs(struct stimx274 *priv, int mode)
 {
 	int err = 0;
 
@@ -708,7 +727,7 @@ static int imx274_mode_regs(struct stimx274 *priv)
 	if (err)
 		return err;
 
-	err = imx274_write_table(priv, priv->mode->init_regs);
+	err = imx274_write_table(priv, mode_table[mode]);
 
 	return err;
 }
@@ -869,7 +888,7 @@ static int imx274_set_fmt(struct v4l2_subdev *sd,
 		index = 0;
 	}
 
-	imx274->mode = &imx274_formats[index];
+	imx274->mode_index = index;
 
 	if (fmt->width > IMX274_MAX_WIDTH)
 		fmt->width = IMX274_MAX_WIDTH;
@@ -1016,15 +1035,14 @@ static int imx274_s_stream(struct v4l2_subdev *sd, int on)
 	struct stimx274 *imx274 = to_imx274(sd);
 	int ret = 0;
 
-	dev_dbg(&imx274->client->dev, "%s : %s, mode index = %td\n", __func__,
-		on ? "Stream Start" : "Stream Stop",
-		imx274->mode - &imx274_formats[0]);
+	dev_dbg(&imx274->client->dev, "%s : %s, mode index = %d\n", __func__,
+		on ? "Stream Start" : "Stream Stop", imx274->mode_index);
 
 	mutex_lock(&imx274->lock);
 
 	if (on) {
 		/* load mode registers */
-		ret = imx274_mode_regs(imx274);
+		ret = imx274_mode_regs(imx274, imx274->mode_index);
 		if (ret)
 			goto fail;
 
@@ -1057,7 +1075,8 @@ static int imx274_s_stream(struct v4l2_subdev *sd, int on)
 	}
 
 	mutex_unlock(&imx274->lock);
-	dev_dbg(&imx274->client->dev, "%s : Done\n", __func__);
+	dev_dbg(&imx274->client->dev,
+		"%s : Done: mode = %d\n", __func__, imx274->mode_index);
 	return 0;
 
 fail:
@@ -1127,14 +1146,14 @@ static int imx274_clamp_coarse_time(struct stimx274 *priv, u32 *val,
 	if (err)
 		return err;
 
-	if (*frame_length < priv->mode->min_frame_len)
-		*frame_length =  priv->mode->min_frame_len;
+	if (*frame_length < min_frame_len[priv->mode_index])
+		*frame_length = min_frame_len[priv->mode_index];
 
 	*val = *frame_length - *val; /* convert to raw shr */
 	if (*val > *frame_length - IMX274_SHR_LIMIT_CONST)
 		*val = *frame_length - IMX274_SHR_LIMIT_CONST;
-	else if (*val < priv->mode->min_SHR)
-		*val = priv->mode->min_SHR;
+	else if (*val < min_SHR[priv->mode_index])
+		*val = min_SHR[priv->mode_index];
 
 	return 0;
 }
@@ -1346,7 +1365,7 @@ static int imx274_set_exposure(struct stimx274 *priv, int val)
 	}
 
 	coarse_time = (IMX274_PIXCLK_CONST1 / IMX274_PIXCLK_CONST2 * val
-			- priv->mode->nocpiop) / hmax;
+			- nocpiop[priv->mode_index]) / hmax;
 
 	/* step 2: convert exposure_time into SHR value */
 
@@ -1356,7 +1375,7 @@ static int imx274_set_exposure(struct stimx274 *priv, int val)
 		goto fail;
 
 	priv->ctrls.exposure->val =
-			(coarse_time * hmax + priv->mode->nocpiop)
+			(coarse_time * hmax + nocpiop[priv->mode_index])
 			/ (IMX274_PIXCLK_CONST1 / IMX274_PIXCLK_CONST2);
 
 	dev_dbg(&priv->client->dev,
@@ -1510,9 +1529,10 @@ static int imx274_set_frame_interval(struct stimx274 *priv,
 				/ frame_interval.numerator);
 
 	/* boundary check */
-	if (req_frame_rate > priv->mode->max_fps) {
+	if (req_frame_rate > max_frame_rate[priv->mode_index]) {
 		frame_interval.numerator = 1;
-		frame_interval.denominator = priv->mode->max_fps;
+		frame_interval.denominator =
+					max_frame_rate[priv->mode_index];
 	} else if (req_frame_rate < IMX274_MIN_FRAME_RATE) {
 		frame_interval.numerator = 1;
 		frame_interval.denominator = IMX274_MIN_FRAME_RATE;
@@ -1612,16 +1632,6 @@ static int imx274_probe(struct i2c_client *client,
 
 	mutex_init(&imx274->lock);
 
-	/* initialize format */
-	imx274->mode = &imx274_formats[IMX274_DEFAULT_MODE];
-	imx274->format.width = imx274->mode->size.width;
-	imx274->format.height = imx274->mode->size.height;
-	imx274->format.field = V4L2_FIELD_NONE;
-	imx274->format.code = MEDIA_BUS_FMT_SRGGB10_1X10;
-	imx274->format.colorspace = V4L2_COLORSPACE_SRGB;
-	imx274->frame_interval.numerator = 1;
-	imx274->frame_interval.denominator = IMX274_DEF_FRAME_RATE;
-
 	/* initialize regmap */
 	imx274->regmap = devm_regmap_init_i2c(client, &imx274_regmap_config);
 	if (IS_ERR(imx274->regmap)) {
@@ -1709,6 +1719,16 @@ static int imx274_probe(struct i2c_client *client,
 			"Error %d setup default controls\n", ret);
 		goto err_ctrls;
 	}
+
+	/* initialize format */
+	imx274->mode_index = IMX274_MODE_3840X2160;
+	imx274->format.width = imx274_formats[0].size.width;
+	imx274->format.height = imx274_formats[0].size.height;
+	imx274->format.field = V4L2_FIELD_NONE;
+	imx274->format.code = MEDIA_BUS_FMT_SRGGB10_1X10;
+	imx274->format.colorspace = V4L2_COLORSPACE_SRGB;
+	imx274->frame_interval.numerator = 1;
+	imx274->frame_interval.denominator = IMX274_DEF_FRAME_RATE;
 
 	/* load default control values */
 	ret = imx274_load_default(imx274);

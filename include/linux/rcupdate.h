@@ -64,6 +64,7 @@ void rcu_barrier_tasks(void);
 
 void __rcu_read_lock(void);
 void __rcu_read_unlock(void);
+void rcu_read_unlock_special(struct task_struct *t);
 void synchronize_rcu(void);
 
 /*
@@ -158,11 +159,11 @@ static inline void rcu_init_nohz(void) { }
 	} while (0)
 
 /*
- * Note a quasi-voluntary context switch for RCU-tasks's benefit.
- * This is a macro rather than an inline function to avoid #include hell.
+ * Note a voluntary context switch for RCU-tasks benefit.  This is a
+ * macro rather than an inline function to avoid #include hell.
  */
 #ifdef CONFIG_TASKS_RCU
-#define rcu_tasks_qs(t) \
+#define rcu_note_voluntary_context_switch_lite(t) \
 	do { \
 		if (READ_ONCE((t)->rcu_tasks_holdout)) \
 			WRITE_ONCE((t)->rcu_tasks_holdout, false); \
@@ -170,14 +171,14 @@ static inline void rcu_init_nohz(void) { }
 #define rcu_note_voluntary_context_switch(t) \
 	do { \
 		rcu_all_qs(); \
-		rcu_tasks_qs(t); \
+		rcu_note_voluntary_context_switch_lite(t); \
 	} while (0)
 void call_rcu_tasks(struct rcu_head *head, rcu_callback_t func);
 void synchronize_rcu_tasks(void);
 void exit_tasks_rcu_start(void);
 void exit_tasks_rcu_finish(void);
 #else /* #ifdef CONFIG_TASKS_RCU */
-#define rcu_tasks_qs(t)	do { } while (0)
+#define rcu_note_voluntary_context_switch_lite(t)	do { } while (0)
 #define rcu_note_voluntary_context_switch(t)		rcu_all_qs()
 #define call_rcu_tasks call_rcu_sched
 #define synchronize_rcu_tasks synchronize_sched
@@ -194,8 +195,8 @@ static inline void exit_tasks_rcu_finish(void) { }
  */
 #define cond_resched_tasks_rcu_qs() \
 do { \
-	rcu_tasks_qs(current); \
-	cond_resched(); \
+	if (!cond_resched()) \
+		rcu_note_voluntary_context_switch_lite(current); \
 } while (0)
 
 /*
@@ -566,8 +567,8 @@ static inline void rcu_preempt_sleep_check(void) { }
  * This is simply an identity function, but it documents where a pointer
  * is handed off from RCU to some other synchronization mechanism, for
  * example, reference counting or locking.  In C11, it would map to
- * kill_dependency().  It could be used as follows::
- *
+ * kill_dependency().  It could be used as follows:
+ * ``
  *	rcu_read_lock();
  *	p = rcu_dereference(gp);
  *	long_lived = is_long_lived(p);
@@ -578,6 +579,7 @@ static inline void rcu_preempt_sleep_check(void) { }
  *			p = rcu_pointer_handoff(p);
  *	}
  *	rcu_read_unlock();
+ *``
  */
 #define rcu_pointer_handoff(p) (p)
 

@@ -678,14 +678,16 @@ struct create_context {
 #define SMB2_LEASE_KEY_SIZE 16
 
 struct lease_context {
-	u8 LeaseKey[SMB2_LEASE_KEY_SIZE];
+	__le64 LeaseKeyLow;
+	__le64 LeaseKeyHigh;
 	__le32 LeaseState;
 	__le32 LeaseFlags;
 	__le64 LeaseDuration;
 } __packed;
 
 struct lease_context_v2 {
-	u8 LeaseKey[SMB2_LEASE_KEY_SIZE];
+	__le64 LeaseKeyLow;
+	__le64 LeaseKeyHigh;
 	__le32 LeaseState;
 	__le32 LeaseFlags;
 	__le64 LeaseDuration;
@@ -1223,7 +1225,6 @@ struct smb2_lease_ack {
 #define FS_DRIVER_PATH_INFORMATION	9 /* Local only */
 #define FS_VOLUME_FLAGS_INFORMATION	10 /* Local only */
 #define FS_SECTOR_SIZE_INFORMATION	11 /* SMB3 or later. Query */
-#define FS_POSIX_INFORMATION		100 /* SMB3.1.1 POSIX. Query */
 
 struct smb2_fs_full_size_info {
 	__le64 TotalAllocationUnits;
@@ -1247,17 +1248,6 @@ struct smb3_fs_ss_info {
 	__le32 Flags;
 	__le32 ByteOffsetForSectorAlignment;
 	__le32 ByteOffsetForPartitionAlignment;
-} __packed;
-
-/* volume info struct - see MS-FSCC 2.5.9 */
-#define MAX_VOL_LABEL_LEN	32
-struct smb3_fs_vol_info {
-	__le64	VolumeCreationTime;
-	__u32	VolumeSerialNumber;
-	__le32	VolumeLabelLength; /* includes trailing null */
-	__u8	SupportsObjects; /* True if eg like NTFS, supports objects */
-	__u8	Reserved;
-	__u8	VolumeLabel[0]; /* variable len */
 } __packed;
 
 /* partial list of QUERY INFO levels */

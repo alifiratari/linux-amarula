@@ -38,7 +38,6 @@
 #include <linux/export.h>
 #include <linux/swap_slots.h>
 #include <linux/sort.h>
-#include <linux/stop_machine.h>
 
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
@@ -1108,64 +1107,6 @@ static struct swap_info_struct *swap_info_get_cont(swp_entry_t entry,
 	return p;
 }
 
-/*
- * Check whether swap entry is valid in the swap device.  If so,
- * return pointer to swap_info_struct, and keep the swap entry valid
- * via preventing the swap device from being swapoff, until
- * put_swap_device() is called.  Otherwise return NULL.
- *
- * Notice that swapoff or swapoff+swapon can still happen before the
- * preempt_disable() in get_swap_device() or after the
- * preempt_enable() in put_swap_device() if there isn't any other way
- * to prevent swapoff, such as page lock, page table lock, etc.  The
- * caller must be prepared for that.  For example, the following
- * situation is possible.
- *
- *   CPU1				CPU2
- *   do_swap_page()
- *     ...				swapoff+swapon
- *     __read_swap_cache_async()
- *       swapcache_prepare()
- *         __swap_duplicate()
- *           // check swap_map
- *     // verify PTE not changed
- *
- * In __swap_duplicate(), the swap_map need to be checked before
- * changing partly because the specified swap entry may be for another
- * swap device which has been swapoff.  And in do_swap_page(), after
- * the page is read from the swap device, the PTE is verified not
- * changed with the page table locked to check whether the swap device
- * has been swapoff or swapoff+swapon.
- */
-struct swap_info_struct *get_swap_device(swp_entry_t entry)
-{
-	struct swap_info_struct *si;
-	unsigned long type, offset;
-
-	if (!entry.val)
-		goto out;
-	type = swp_type(entry);
-	if (type >= nr_swapfiles)
-		goto bad_nofile;
-	si = swap_info[type];
-
-	preempt_disable();
-	if (!(si->flags & SWP_VALID))
-		goto unlock_out;
-	offset = swp_offset(entry);
-	if (offset >= si->max)
-		goto unlock_out;
-
-	return si;
-bad_nofile:
-	pr_err("%s: %s%08lx\n", __func__, Bad_file, entry.val);
-out:
-	return NULL;
-unlock_out:
-	preempt_enable();
-	return NULL;
-}
-
 static unsigned char __swap_entry_free(struct swap_info_struct *p,
 				       swp_entry_t entry, unsigned char usage)
 {
@@ -1387,18 +1328,11 @@ int page_swapcount(struct page *page)
 	return count;
 }
 
-int __swap_count(swp_entry_t entry)
+int __swap_count(struct swap_info_struct *si, swp_entry_t entry)
 {
-	struct swap_info_struct *si;
 	pgoff_t offset = swp_offset(entry);
-	int count = 0;
 
-	si = get_swap_device(entry);
-	if (si) {
-		count = swap_count(si->swap_map[offset]);
-		put_swap_device(si);
-	}
-	return count;
+	return swap_count(si->swap_map[offset]);
 }
 
 static int swap_swapcount(struct swap_info_struct *si, swp_entry_t entry)
@@ -1423,11 +1357,9 @@ int __swp_swapcount(swp_entry_t entry)
 	int count = 0;
 	struct swap_info_struct *si;
 
-	si = get_swap_device(entry);
-	if (si) {
+	si = __swap_info_get(entry);
+	if (si)
 		count = swap_swapcount(si, entry);
-		put_swap_device(si);
-	}
 	return count;
 }
 
@@ -1868,6 +1800,8 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 	dec_mm_counter(vma->vm_mm, MM_SWAPENTS);
 	inc_mm_counter(vma->vm_mm, MM_ANONPAGES);
 	get_page(page);
+	set_pte_at(vma->vm_mm, addr, pte,
+		   pte_mkold(mk_pte(page, vma->vm_page_prot)));
 	if (page == swapcache) {
 		page_add_anon_rmap(page, vma, addr, false);
 		mem_cgroup_commit_charge(page, memcg, true, false);
@@ -1876,8 +1810,6 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 		mem_cgroup_commit_charge(page, memcg, false, false);
 		lru_cache_add_active_or_unevictable(page, vma);
 	}
-	set_pte_at(vma->vm_mm, addr, pte,
-		   pte_mkold(mk_pte(page, vma->vm_page_prot)));
 	swap_free(entry);
 	/*
 	 * Move the page to the active list so it is not
@@ -2519,9 +2451,9 @@ static int swap_node(struct swap_info_struct *p)
 	return bdev ? bdev->bd_disk->node_id : NUMA_NO_NODE;
 }
 
-static void setup_swap_info(struct swap_info_struct *p, int prio,
-			    unsigned char *swap_map,
-			    struct swap_cluster_info *cluster_info)
+static void _enable_swap_info(struct swap_info_struct *p, int prio,
+				unsigned char *swap_map,
+				struct swap_cluster_info *cluster_info)
 {
 	int i;
 
@@ -2546,11 +2478,7 @@ static void setup_swap_info(struct swap_info_struct *p, int prio,
 	}
 	p->swap_map = swap_map;
 	p->cluster_info = cluster_info;
-}
-
-static void _enable_swap_info(struct swap_info_struct *p)
-{
-	p->flags |= SWP_WRITEOK | SWP_VALID;
+	p->flags |= SWP_WRITEOK;
 	atomic_long_add(p->pages, &nr_swap_pages);
 	total_swap_pages += p->pages;
 
@@ -2569,11 +2497,6 @@ static void _enable_swap_info(struct swap_info_struct *p)
 	add_to_avail_list(p);
 }
 
-static int swap_onoff_stop(void *arg)
-{
-	return 0;
-}
-
 static void enable_swap_info(struct swap_info_struct *p, int prio,
 				unsigned char *swap_map,
 				struct swap_cluster_info *cluster_info,
@@ -2582,17 +2505,7 @@ static void enable_swap_info(struct swap_info_struct *p, int prio,
 	frontswap_init(p->type, frontswap_map);
 	spin_lock(&swap_lock);
 	spin_lock(&p->lock);
-	setup_swap_info(p, prio, swap_map, cluster_info);
-	spin_unlock(&p->lock);
-	spin_unlock(&swap_lock);
-	/*
-	 * Guarantee swap_map, cluster_info, etc. fields are used
-	 * between get/put_swap_device() only if SWP_VALID bit is set
-	 */
-	stop_machine(swap_onoff_stop, NULL, cpu_online_mask);
-	spin_lock(&swap_lock);
-	spin_lock(&p->lock);
-	_enable_swap_info(p);
+	 _enable_swap_info(p, prio, swap_map, cluster_info);
 	spin_unlock(&p->lock);
 	spin_unlock(&swap_lock);
 }
@@ -2601,8 +2514,7 @@ static void reinsert_swap_info(struct swap_info_struct *p)
 {
 	spin_lock(&swap_lock);
 	spin_lock(&p->lock);
-	setup_swap_info(p, p->prio, p->swap_map, p->cluster_info);
-	_enable_swap_info(p);
+	_enable_swap_info(p, p->prio, p->swap_map, p->cluster_info);
 	spin_unlock(&p->lock);
 	spin_unlock(&swap_lock);
 }
@@ -2704,17 +2616,6 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 	}
 
 	reenable_swap_slots_cache_unlock();
-
-	spin_lock(&swap_lock);
-	spin_lock(&p->lock);
-	p->flags &= ~SWP_VALID;		/* mark swap device as invalid */
-	spin_unlock(&p->lock);
-	spin_unlock(&swap_lock);
-	/*
-	 * wait for swap operations protected by get/put_swap_device()
-	 * to complete
-	 */
-	stop_machine(swap_onoff_stop, NULL, cpu_online_mask);
 
 	flush_work(&p->discard_work);
 
@@ -3465,16 +3366,22 @@ static int __swap_duplicate(swp_entry_t entry, unsigned char usage)
 {
 	struct swap_info_struct *p;
 	struct swap_cluster_info *ci;
-	unsigned long offset;
+	unsigned long offset, type;
 	unsigned char count;
 	unsigned char has_cache;
 	int err = -EINVAL;
 
-	p = get_swap_device(entry);
-	if (!p)
+	if (non_swap_entry(entry))
 		goto out;
 
+	type = swp_type(entry);
+	if (type >= nr_swapfiles)
+		goto bad_file;
+	p = swap_info[type];
 	offset = swp_offset(entry);
+	if (unlikely(offset >= p->max))
+		goto out;
+
 	ci = lock_cluster_or_swap_info(p, offset);
 
 	count = p->swap_map[offset];
@@ -3520,9 +3427,11 @@ static int __swap_duplicate(swp_entry_t entry, unsigned char usage)
 unlock_out:
 	unlock_cluster_or_swap_info(p, ci);
 out:
-	if (p)
-		put_swap_device(p);
 	return err;
+
+bad_file:
+	pr_err("swap_dup: %s%08lx\n", Bad_file, entry.val);
+	goto out;
 }
 
 /*
@@ -3614,7 +3523,6 @@ int add_swap_count_continuation(swp_entry_t entry, gfp_t gfp_mask)
 	struct page *list_page;
 	pgoff_t offset;
 	unsigned char count;
-	int ret = 0;
 
 	/*
 	 * When debugging, it's easier to use __GFP_ZERO here; but it's better
@@ -3622,15 +3530,15 @@ int add_swap_count_continuation(swp_entry_t entry, gfp_t gfp_mask)
 	 */
 	page = alloc_page(gfp_mask | __GFP_HIGHMEM);
 
-	si = get_swap_device(entry);
+	si = swap_info_get(entry);
 	if (!si) {
 		/*
 		 * An acceptable race has occurred since the failing
-		 * __swap_duplicate(): the swap device may be swapoff
+		 * __swap_duplicate(): the swap entry has been freed,
+		 * perhaps even the whole swap_map cleared for swapoff.
 		 */
 		goto outer;
 	}
-	spin_lock(&si->lock);
 
 	offset = swp_offset(entry);
 
@@ -3648,8 +3556,9 @@ int add_swap_count_continuation(swp_entry_t entry, gfp_t gfp_mask)
 	}
 
 	if (!page) {
-		ret = -ENOMEM;
-		goto out;
+		unlock_cluster(ci);
+		spin_unlock(&si->lock);
+		return -ENOMEM;
 	}
 
 	/*
@@ -3701,11 +3610,10 @@ out_unlock_cont:
 out:
 	unlock_cluster(ci);
 	spin_unlock(&si->lock);
-	put_swap_device(si);
 outer:
 	if (page)
 		__free_page(page);
-	return ret;
+	return 0;
 }
 
 /*
@@ -3822,37 +3730,6 @@ static void free_swap_count_continuations(struct swap_info_struct *si)
 		}
 	}
 }
-
-#if defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
-void mem_cgroup_throttle_swaprate(struct mem_cgroup *memcg, int node,
-				  gfp_t gfp_mask)
-{
-	struct swap_info_struct *si, *next;
-	if (!(gfp_mask & __GFP_IO) || !memcg)
-		return;
-
-	if (!blk_cgroup_congested())
-		return;
-
-	/*
-	 * We've already scheduled a throttle, avoid taking the global swap
-	 * lock.
-	 */
-	if (current->throttle_queue)
-		return;
-
-	spin_lock(&swap_avail_lock);
-	plist_for_each_entry_safe(si, next, &swap_avail_heads[node],
-				  avail_lists[node]) {
-		if (si->bdev) {
-			blkcg_schedule_throttle(bdev_get_queue(si->bdev),
-						true);
-			break;
-		}
-	}
-	spin_unlock(&swap_avail_lock);
-}
-#endif
 
 static int __init swapfile_init(void)
 {

@@ -228,8 +228,7 @@ static void tegra_sdhci_set_uhs_signaling(struct sdhci_host *host,
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_tegra *tegra_host = sdhci_pltfm_priv(pltfm_host);
 
-	if (timing == MMC_TIMING_UHS_DDR50 ||
-	    timing == MMC_TIMING_MMC_DDR52)
+	if (timing == MMC_TIMING_UHS_DDR50)
 		tegra_host->ddr_signaling = true;
 
 	sdhci_set_uhs_signaling(host, timing);
@@ -239,7 +238,11 @@ static unsigned int tegra_sdhci_get_max_clock(struct sdhci_host *host)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 
-	return clk_round_rate(pltfm_host->clk, UINT_MAX);
+	/*
+	 * DDR modes require the host to run at double the card frequency, so
+	 * the maximum rate we can support is half of the module input clock.
+	 */
+	return clk_round_rate(pltfm_host->clk, UINT_MAX) / 2;
 }
 
 static void tegra_sdhci_set_tap(struct sdhci_host *host, unsigned int tap)
@@ -331,16 +334,7 @@ static const struct sdhci_pltfm_data sdhci_tegra30_pdata = {
 		  SDHCI_QUIRK_NO_HISPD_BIT |
 		  SDHCI_QUIRK_BROKEN_ADMA_ZEROLEN_DESC |
 		  SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN,
-	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN |
-		   SDHCI_QUIRK2_BROKEN_HS200 |
-		   /*
-		    * Auto-CMD23 leads to "Got command interrupt 0x00010000 even
-		    * though no command operation was in progress."
-		    *
-		    * The exact reason is unknown, as the same hardware seems
-		    * to support Auto CMD23 on a downstream 3.1 kernel.
-		    */
-		   SDHCI_QUIRK2_ACMD23_BROKEN,
+	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
 	.ops  = &tegra_sdhci_ops,
 };
 

@@ -2343,7 +2343,7 @@ static ssize_t ocfs2_file_write_iter(struct kiocb *iocb,
 
 	written = __generic_file_write_iter(iocb, from);
 	/* buffered aio wouldn't have proper lock coverage today */
-	BUG_ON(written == -EIOCBQUEUED && !direct_io);
+	BUG_ON(written == -EIOCBQUEUED && !(iocb->ki_flags & IOCB_DIRECT));
 
 	/*
 	 * deep in g_f_a_w_n()->ocfs2_direct_IO we pass in a ocfs2_dio_end_io
@@ -2463,7 +2463,7 @@ static ssize_t ocfs2_file_read_iter(struct kiocb *iocb,
 	trace_generic_file_read_iter_ret(ret);
 
 	/* buffered aio wouldn't have proper lock coverage today */
-	BUG_ON(ret == -EIOCBQUEUED && !direct_io);
+	BUG_ON(ret == -EIOCBQUEUED && !(iocb->ki_flags & IOCB_DIRECT));
 
 	/* see ocfs2_file_write_iter */
 	if (ret == -EIOCBQUEUED || !ocfs2_iocb_is_rw_locked(iocb)) {
@@ -2537,14 +2537,19 @@ static int ocfs2_file_clone_range(struct file *file_in,
 					 len, false);
 }
 
-static int ocfs2_file_dedupe_range(struct file *file_in,
-				   loff_t pos_in,
-				   struct file *file_out,
-				   loff_t pos_out,
-				   u64 len)
+static ssize_t ocfs2_file_dedupe_range(struct file *src_file,
+				       u64 loff,
+				       u64 len,
+				       struct file *dst_file,
+				       u64 dst_loff)
 {
-	return ocfs2_reflink_remap_range(file_in, pos_in, file_out, pos_out,
+	int error;
+
+	error = ocfs2_reflink_remap_range(src_file, loff, dst_file, dst_loff,
 					  len, true);
+	if (error)
+		return error;
+	return len;
 }
 
 const struct inode_operations ocfs2_file_iops = {

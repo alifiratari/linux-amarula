@@ -1836,9 +1836,7 @@ static int gen8_configure_all_contexts(struct drm_i915_private *dev_priv,
 	 * So far the best way to work around this issue seems to be draining
 	 * the GPU from any submitted work.
 	 */
-	ret = i915_gem_wait_for_idle(dev_priv,
-				     wait_flags,
-				     MAX_SCHEDULE_TIMEOUT);
+	ret = i915_gem_wait_for_idle(dev_priv, wait_flags);
 	if (ret)
 		goto out;
 

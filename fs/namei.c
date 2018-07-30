@@ -887,8 +887,6 @@ static inline void put_link(struct nameidata *nd)
 
 int sysctl_protected_symlinks __read_mostly = 0;
 int sysctl_protected_hardlinks __read_mostly = 0;
-int sysctl_protected_fifos __read_mostly;
-int sysctl_protected_regular __read_mostly;
 
 /**
  * may_follow_link - Check symlink following for unsafe situations
@@ -1005,45 +1003,6 @@ static int may_linkat(struct path *link)
 	return -EPERM;
 }
 
-/**
- * may_create_in_sticky - Check whether an O_CREAT open in a sticky directory
- *			  should be allowed, or not, on files that already
- *			  exist.
- * @dir: the sticky parent directory
- * @inode: the inode of the file to open
- *
- * Block an O_CREAT open of a FIFO (or a regular file) when:
- *   - sysctl_protected_fifos (or sysctl_protected_regular) is enabled
- *   - the file already exists
- *   - we are in a sticky directory
- *   - we don't own the file
- *   - the owner of the directory doesn't own the file
- *   - the directory is world writable
- * If the sysctl_protected_fifos (or sysctl_protected_regular) is set to 2
- * the directory doesn't have to be world writable: being group writable will
- * be enough.
- *
- * Returns 0 if the open is allowed, -ve on error.
- */
-static int may_create_in_sticky(struct dentry * const dir,
-				struct inode * const inode)
-{
-	if ((!sysctl_protected_fifos && S_ISFIFO(inode->i_mode)) ||
-	    (!sysctl_protected_regular && S_ISREG(inode->i_mode)) ||
-	    likely(!(dir->d_inode->i_mode & S_ISVTX)) ||
-	    uid_eq(inode->i_uid, dir->d_inode->i_uid) ||
-	    uid_eq(current_fsuid(), inode->i_uid))
-		return 0;
-
-	if (likely(dir->d_inode->i_mode & 0002) ||
-	    (dir->d_inode->i_mode & 0020 &&
-	     ((sysctl_protected_fifos >= 2 && S_ISFIFO(inode->i_mode)) ||
-	      (sysctl_protected_regular >= 2 && S_ISREG(inode->i_mode))))) {
-		return -EACCES;
-	}
-	return 0;
-}
-
 static __always_inline
 const char *get_link(struct nameidata *nd)
 {
@@ -1056,7 +1015,7 @@ const char *get_link(struct nameidata *nd)
 	if (!(nd->flags & LOOKUP_RCU)) {
 		touch_atime(&last->link);
 		cond_resched();
-	} else if (atime_needs_update(&last->link, inode)) {
+	} else if (atime_needs_update_rcu(&last->link, inode)) {
 		if (unlikely(unlazy_walk(nd)))
 			return ERR_PTR(-ECHILD);
 		touch_atime(&last->link);
@@ -3077,7 +3036,8 @@ static int may_o_create(const struct path *dir, struct dentry *dentry, umode_t m
 static int atomic_open(struct nameidata *nd, struct dentry *dentry,
 			struct path *path, struct file *file,
 			const struct open_flags *op,
-			int open_flag, umode_t mode)
+			int open_flag, umode_t mode,
+			int *opened)
 {
 	struct dentry *const DENTRY_NOT_SET = (void *) -1UL;
 	struct inode *dir =  nd->path.dentry->d_inode;
@@ -3092,7 +3052,8 @@ static int atomic_open(struct nameidata *nd, struct dentry *dentry,
 	file->f_path.dentry = DENTRY_NOT_SET;
 	file->f_path.mnt = nd->path.mnt;
 	error = dir->i_op->atomic_open(dir, dentry, file,
-				       open_to_namei_flags(open_flag), mode);
+				       open_to_namei_flags(open_flag),
+				       mode, opened);
 	d_lookup_done(dentry);
 	if (!error) {
 		/*
@@ -3100,7 +3061,7 @@ static int atomic_open(struct nameidata *nd, struct dentry *dentry,
 		 * permission here.
 		 */
 		int acc_mode = op->acc_mode;
-		if (file->f_mode & FMODE_CREATED) {
+		if (*opened & FILE_CREATED) {
 			WARN_ON(!(open_flag & O_CREAT));
 			fsnotify_create(dir, dentry);
 			acc_mode = 0;
@@ -3116,7 +3077,7 @@ static int atomic_open(struct nameidata *nd, struct dentry *dentry,
 				dput(dentry);
 				dentry = file->f_path.dentry;
 			}
-			if (file->f_mode & FMODE_CREATED)
+			if (*opened & FILE_CREATED)
 				fsnotify_create(dir, dentry);
 			if (unlikely(d_is_negative(dentry))) {
 				error = -ENOENT;
@@ -3145,11 +3106,14 @@ static int atomic_open(struct nameidata *nd, struct dentry *dentry,
  * specified then a negative dentry may be returned.
  *
  * An error code is returned otherwise.
+ *
+ * FILE_CREATE will be set in @*opened if the dentry was created and will be
+ * cleared otherwise prior to returning.
  */
 static int lookup_open(struct nameidata *nd, struct path *path,
 			struct file *file,
 			const struct open_flags *op,
-			bool got_write)
+			bool got_write, int *opened)
 {
 	struct dentry *dir = nd->path.dentry;
 	struct inode *dir_inode = dir->d_inode;
@@ -3162,7 +3126,7 @@ static int lookup_open(struct nameidata *nd, struct path *path,
 	if (unlikely(IS_DEADDIR(dir_inode)))
 		return -ENOENT;
 
-	file->f_mode &= ~FMODE_CREATED;
+	*opened &= ~FILE_CREATED;
 	dentry = d_lookup(dir, &nd->last);
 	for (;;) {
 		if (!dentry) {
@@ -3224,7 +3188,7 @@ static int lookup_open(struct nameidata *nd, struct path *path,
 
 	if (dir_inode->i_op->atomic_open) {
 		error = atomic_open(nd, dentry, path, file, op, open_flag,
-				    mode);
+				    mode, opened);
 		if (unlikely(error == -ENOENT) && create_error)
 			error = create_error;
 		return error;
@@ -3247,7 +3211,7 @@ no_open:
 
 	/* Negative dentry, just create the file */
 	if (!dentry->d_inode && (open_flag & O_CREAT)) {
-		file->f_mode |= FMODE_CREATED;
+		*opened |= FILE_CREATED;
 		audit_inode_child(dir_inode, dentry, AUDIT_TYPE_CHILD_CREATE);
 		if (!dir_inode->i_op->create) {
 			error = -EACCES;
@@ -3277,7 +3241,8 @@ out_dput:
  * Handle the last step of open()
  */
 static int do_last(struct nameidata *nd,
-		   struct file *file, const struct open_flags *op)
+		   struct file *file, const struct open_flags *op,
+		   int *opened)
 {
 	struct dentry *dir = nd->path.dentry;
 	int open_flag = op->open_flag;
@@ -3343,7 +3308,7 @@ static int do_last(struct nameidata *nd,
 		inode_lock(dir->d_inode);
 	else
 		inode_lock_shared(dir->d_inode);
-	error = lookup_open(nd, &path, file, op, got_write);
+	error = lookup_open(nd, &path, file, op, got_write, opened);
 	if (open_flag & O_CREAT)
 		inode_unlock(dir->d_inode);
 	else
@@ -3353,7 +3318,7 @@ static int do_last(struct nameidata *nd,
 		if (error)
 			goto out;
 
-		if ((file->f_mode & FMODE_CREATED) ||
+		if ((*opened & FILE_CREATED) ||
 		    !S_ISREG(file_inode(file)->i_mode))
 			will_truncate = false;
 
@@ -3361,7 +3326,7 @@ static int do_last(struct nameidata *nd,
 		goto opened;
 	}
 
-	if (file->f_mode & FMODE_CREATED) {
+	if (*opened & FILE_CREATED) {
 		/* Don't check for write permission, don't truncate */
 		open_flag &= ~O_TRUNC;
 		will_truncate = false;
@@ -3411,15 +3376,9 @@ finish_open:
 	if (error)
 		return error;
 	audit_inode(nd->name, nd->path.dentry, 0);
-	if (open_flag & O_CREAT) {
-		error = -EISDIR;
-		if (d_is_dir(nd->path.dentry))
-			goto out;
-		error = may_create_in_sticky(dir,
-					     d_backing_inode(nd->path.dentry));
-		if (unlikely(error))
-			goto out;
-	}
+	error = -EISDIR;
+	if ((open_flag & O_CREAT) && d_is_dir(nd->path.dentry))
+		goto out;
 	error = -ENOTDIR;
 	if ((nd->flags & LOOKUP_DIRECTORY) && !d_can_lookup(nd->path.dentry))
 		goto out;
@@ -3436,15 +3395,20 @@ finish_open_created:
 	error = may_open(&nd->path, acc_mode, open_flag);
 	if (error)
 		goto out;
-	BUG_ON(file->f_mode & FMODE_OPENED); /* once it's opened, it's opened */
+	BUG_ON(*opened & FILE_OPENED); /* once it's opened, it's opened */
 	error = vfs_open(&nd->path, file, current_cred());
 	if (error)
 		goto out;
+	*opened |= FILE_OPENED;
 opened:
-	error = ima_file_check(file, op->acc_mode);
+	error = open_check_o_direct(file);
+	if (!error)
+		error = ima_file_check(file, op->acc_mode, *opened);
 	if (!error && will_truncate)
 		error = handle_truncate(file);
 out:
+	if (unlikely(error) && (*opened & FILE_OPENED))
+		fput(file);
 	if (unlikely(error > 0)) {
 		WARN_ON(1);
 		error = -EINVAL;
@@ -3494,7 +3458,7 @@ EXPORT_SYMBOL(vfs_tmpfile);
 
 static int do_tmpfile(struct nameidata *nd, unsigned flags,
 		const struct open_flags *op,
-		struct file *file)
+		struct file *file, int *opened)
 {
 	struct dentry *child;
 	struct path path;
@@ -3516,7 +3480,12 @@ static int do_tmpfile(struct nameidata *nd, unsigned flags,
 	if (error)
 		goto out2;
 	file->f_path.mnt = path.mnt;
-	error = finish_open(file, child, NULL);
+	error = finish_open(file, child, NULL, opened);
+	if (error)
+		goto out2;
+	error = open_check_o_direct(file);
+	if (error)
+		fput(file);
 out2:
 	mnt_drop_write(path.mnt);
 out:
@@ -3541,6 +3510,7 @@ static struct file *path_openat(struct nameidata *nd,
 {
 	const char *s;
 	struct file *file;
+	int opened = 0;
 	int error;
 
 	file = get_empty_filp();
@@ -3550,12 +3520,14 @@ static struct file *path_openat(struct nameidata *nd,
 	file->f_flags = op->open_flag;
 
 	if (unlikely(file->f_flags & __O_TMPFILE)) {
-		error = do_tmpfile(nd, flags, op, file);
+		error = do_tmpfile(nd, flags, op, file, &opened);
 		goto out2;
 	}
 
 	if (unlikely(file->f_flags & O_PATH)) {
 		error = do_o_path(nd, flags, file);
+		if (!error)
+			opened |= FILE_OPENED;
 		goto out2;
 	}
 
@@ -3565,7 +3537,7 @@ static struct file *path_openat(struct nameidata *nd,
 		return ERR_CAST(s);
 	}
 	while (!(error = link_path_walk(s, nd)) &&
-		(error = do_last(nd, file, op)) > 0) {
+		(error = do_last(nd, file, op, &opened)) > 0) {
 		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
 		s = trailing_symlink(nd);
 		if (IS_ERR(s)) {
@@ -3575,23 +3547,20 @@ static struct file *path_openat(struct nameidata *nd,
 	}
 	terminate_walk(nd);
 out2:
-	if (likely(!error)) {
-		if (likely(file->f_mode & FMODE_OPENED))
-			return file;
-		WARN_ON(1);
-		error = -EINVAL;
-	}
-	if (file->f_mode & FMODE_OPENED)
-		fput(file);
-	else
+	if (!(opened & FILE_OPENED)) {
+		BUG_ON(!error);
 		put_filp(file);
-	if (error == -EOPENSTALE) {
-		if (flags & LOOKUP_RCU)
-			error = -ECHILD;
-		else
-			error = -ESTALE;
 	}
-	return ERR_PTR(error);
+	if (unlikely(error)) {
+		if (error == -EOPENSTALE) {
+			if (flags & LOOKUP_RCU)
+				error = -ECHILD;
+			else
+				error = -ESTALE;
+		}
+		file = ERR_PTR(error);
+	}
+	return file;
 }
 
 struct file *do_filp_open(int dfd, struct filename *pathname,

@@ -163,13 +163,6 @@ then
 	print_warning Summary: $summary
 	cat $T.diags >> $file.diags
 fi
-for i in $file.*.diags
-do
-	if test -f "$i"
-	then
-		cat $i >> $file.diags
-	fi
-done
 if ! test -s $file.diags
 then
 	rm -f $file.diags

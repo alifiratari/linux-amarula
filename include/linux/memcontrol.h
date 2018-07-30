@@ -35,7 +35,6 @@ struct mem_cgroup;
 struct page;
 struct mm_struct;
 struct kmem_cache;
-struct oom_control;
 
 /* Cgroup-specific page state, on top of universal node page state */
 enum memcg_stat_item {
@@ -113,15 +112,6 @@ struct lruvec_stat {
 };
 
 /*
- * Bitmap of shrinker::id corresponding to memcg-aware shrinkers,
- * which have elements charged to this memcg.
- */
-struct memcg_shrinker_map {
-	struct rcu_head rcu;
-	unsigned long map[0];
-};
-
-/*
  * per-zone information in memory controller.
  */
 struct mem_cgroup_per_node {
@@ -134,9 +124,6 @@ struct mem_cgroup_per_node {
 
 	struct mem_cgroup_reclaim_iter	iter[DEF_PRIORITY + 1];
 
-#ifdef CONFIG_MEMCG_KMEM
-	struct memcg_shrinker_map __rcu	*shrinker_map;
-#endif
 	struct rb_node		tree_node;	/* RB tree node */
 	unsigned long		usage_in_excess;/* Set to the value by which */
 						/* the soft limit is exceeded*/
@@ -234,13 +221,6 @@ struct mem_cgroup {
 	/* OOM-Killer disable */
 	int		oom_kill_disable;
 
-	/*
-	 * Treat the sub-tree as an indivisible memory consumer,
-	 * kill all belonging tasks if the memory cgroup selected
-	 * as OOM victim.
-	 */
-	bool oom_group;
-
 	/* memory.events */
 	struct cgroup_file events_file;
 
@@ -291,7 +271,7 @@ struct mem_cgroup {
 	bool			tcpmem_active;
 	int			tcpmem_pressure;
 
-#ifdef CONFIG_MEMCG_KMEM
+#ifndef CONFIG_SLOB
         /* Index in the kmem_cache->memcg_params.memcg_caches array */
 	int kmemcg_id;
 	enum memcg_kmem_state kmem_state;
@@ -326,11 +306,6 @@ struct mem_cgroup {
 
 extern struct mem_cgroup *root_mem_cgroup;
 
-static inline bool mem_cgroup_is_root(struct mem_cgroup *memcg)
-{
-	return (memcg == root_mem_cgroup);
-}
-
 static inline bool mem_cgroup_disabled(void)
 {
 	return !cgroup_subsys_enabled(memory_cgrp_subsys);
@@ -340,9 +315,6 @@ enum mem_cgroup_protection mem_cgroup_protected(struct mem_cgroup *root,
 						struct mem_cgroup *memcg);
 
 int mem_cgroup_try_charge(struct page *page, struct mm_struct *mm,
-			  gfp_t gfp_mask, struct mem_cgroup **memcgp,
-			  bool compound);
-int mem_cgroup_try_charge_delay(struct page *page, struct mm_struct *mm,
 			  gfp_t gfp_mask, struct mem_cgroup **memcgp,
 			  bool compound);
 void mem_cgroup_commit_charge(struct page *page, struct mem_cgroup *memcg,
@@ -398,19 +370,9 @@ struct lruvec *mem_cgroup_page_lruvec(struct page *, struct pglist_data *);
 bool task_in_mem_cgroup(struct task_struct *task, struct mem_cgroup *memcg);
 struct mem_cgroup *mem_cgroup_from_task(struct task_struct *p);
 
-struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm);
-
-struct mem_cgroup *get_mem_cgroup_from_page(struct page *page);
-
 static inline
 struct mem_cgroup *mem_cgroup_from_css(struct cgroup_subsys_state *css){
 	return css ? container_of(css, struct mem_cgroup, css) : NULL;
-}
-
-static inline void mem_cgroup_put(struct mem_cgroup *memcg)
-{
-	if (memcg)
-		css_put(&memcg->css);
 }
 
 #define mem_cgroup_from_counter(counter, member)	\
@@ -532,16 +494,16 @@ unsigned long mem_cgroup_get_max(struct mem_cgroup *memcg);
 void mem_cgroup_print_oom_info(struct mem_cgroup *memcg,
 				struct task_struct *p);
 
-static inline void mem_cgroup_enter_user_fault(void)
+static inline void mem_cgroup_oom_enable(void)
 {
-	WARN_ON(current->in_user_fault);
-	current->in_user_fault = 1;
+	WARN_ON(current->memcg_may_oom);
+	current->memcg_may_oom = 1;
 }
 
-static inline void mem_cgroup_exit_user_fault(void)
+static inline void mem_cgroup_oom_disable(void)
 {
-	WARN_ON(!current->in_user_fault);
-	current->in_user_fault = 0;
+	WARN_ON(!current->memcg_may_oom);
+	current->memcg_may_oom = 0;
 }
 
 static inline bool task_in_memcg_oom(struct task_struct *p)
@@ -550,13 +512,6 @@ static inline bool task_in_memcg_oom(struct task_struct *p)
 }
 
 bool mem_cgroup_oom_synchronize(bool wait);
-
-bool mem_cgroup_select_oom_victim(struct oom_control *oc);
-
-static inline bool mem_cgroup_oom_group(struct mem_cgroup *memcg)
-{
-	return memcg->oom_group;
-}
 
 #ifdef CONFIG_MEMCG_SWAP
 extern int do_swap_account;
@@ -804,11 +759,6 @@ void mem_cgroup_split_huge_fixup(struct page *head);
 
 struct mem_cgroup;
 
-static inline bool mem_cgroup_is_root(struct mem_cgroup *memcg)
-{
-	return true;
-}
-
 static inline bool mem_cgroup_disabled(void)
 {
 	return true;
@@ -834,16 +784,6 @@ static inline int mem_cgroup_try_charge(struct page *page, struct mm_struct *mm,
 					gfp_t gfp_mask,
 					struct mem_cgroup **memcgp,
 					bool compound)
-{
-	*memcgp = NULL;
-	return 0;
-}
-
-static inline int mem_cgroup_try_charge_delay(struct page *page,
-					      struct mm_struct *mm,
-					      gfp_t gfp_mask,
-					      struct mem_cgroup **memcgp,
-					      bool compound)
 {
 	*memcgp = NULL;
 	return 0;
@@ -895,20 +835,6 @@ static inline bool task_in_mem_cgroup(struct task_struct *task,
 				      const struct mem_cgroup *memcg)
 {
 	return true;
-}
-
-static inline struct mem_cgroup *get_mem_cgroup_from_mm(struct mm_struct *mm)
-{
-	return NULL;
-}
-
-static inline struct mem_cgroup *get_mem_cgroup_from_page(struct page *page)
-{
-	return NULL;
-}
-
-static inline void mem_cgroup_put(struct mem_cgroup *memcg)
-{
 }
 
 static inline struct mem_cgroup *
@@ -998,11 +924,11 @@ static inline void mem_cgroup_handle_over_high(void)
 {
 }
 
-static inline void mem_cgroup_enter_user_fault(void)
+static inline void mem_cgroup_oom_enable(void)
 {
 }
 
-static inline void mem_cgroup_exit_user_fault(void)
+static inline void mem_cgroup_oom_disable(void)
 {
 }
 
@@ -1102,16 +1028,6 @@ static inline void count_memcg_page_event(struct page *page,
 static inline
 void count_memcg_event_mm(struct mm_struct *mm, enum vm_event_item idx)
 {
-}
-
-static inline bool mem_cgroup_select_oom_victim(struct oom_control *oc)
-{
-	return false;
-}
-
-static inline bool mem_cgroup_oom_group(struct mem_cgroup *memcg)
-{
-	return false;
 }
 #endif /* CONFIG_MEMCG */
 
@@ -1278,7 +1194,7 @@ int memcg_kmem_charge_memcg(struct page *page, gfp_t gfp, int order,
 int memcg_kmem_charge(struct page *page, gfp_t gfp, int order);
 void memcg_kmem_uncharge(struct page *page, int order);
 
-#ifdef CONFIG_MEMCG_KMEM
+#if defined(CONFIG_MEMCG) && !defined(CONFIG_SLOB)
 extern struct static_key_false memcg_kmem_enabled_key;
 extern struct workqueue_struct *memcg_kmem_cache_wq;
 
@@ -1309,10 +1225,6 @@ static inline int memcg_cache_id(struct mem_cgroup *memcg)
 	return memcg ? memcg->kmemcg_id : -1;
 }
 
-extern int memcg_expand_shrinker_maps(int new_id);
-
-extern void memcg_set_shrinker_bit(struct mem_cgroup *memcg,
-				   int nid, int shrinker_id);
 #else
 #define for_each_memcg_cache_index(_idx)	\
 	for (; NULL; )
@@ -1335,8 +1247,6 @@ static inline void memcg_put_cache_ids(void)
 {
 }
 
-static inline void memcg_set_shrinker_bit(struct mem_cgroup *memcg,
-					  int nid, int shrinker_id) { }
-#endif /* CONFIG_MEMCG_KMEM */
+#endif /* CONFIG_MEMCG && !CONFIG_SLOB */
 
 #endif /* _LINUX_MEMCONTROL_H */

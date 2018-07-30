@@ -298,20 +298,15 @@ static struct snd_soc_dai_driver mtk_dai_pcm_driver[] = {
 
 int mt6797_dai_pcm_register(struct mtk_base_afe *afe)
 {
-	struct mtk_base_afe_dai *dai;
+	int id = MT6797_DAI_PCM_1;
 
-	dai = devm_kzalloc(afe->dev, sizeof(*dai), GFP_KERNEL);
-	if (!dai)
-		return -ENOMEM;
+	afe->sub_dais[id].dai_drivers = mtk_dai_pcm_driver;
+	afe->sub_dais[id].num_dai_drivers = ARRAY_SIZE(mtk_dai_pcm_driver);
 
-	list_add(&dai->list, &afe->sub_dais);
+	afe->sub_dais[id].dapm_widgets = mtk_dai_pcm_widgets;
+	afe->sub_dais[id].num_dapm_widgets = ARRAY_SIZE(mtk_dai_pcm_widgets);
+	afe->sub_dais[id].dapm_routes = mtk_dai_pcm_routes;
+	afe->sub_dais[id].num_dapm_routes = ARRAY_SIZE(mtk_dai_pcm_routes);
 
-	dai->dai_drivers = mtk_dai_pcm_driver;
-	dai->num_dai_drivers = ARRAY_SIZE(mtk_dai_pcm_driver);
-
-	dai->dapm_widgets = mtk_dai_pcm_widgets;
-	dai->num_dapm_widgets = ARRAY_SIZE(mtk_dai_pcm_widgets);
-	dai->dapm_routes = mtk_dai_pcm_routes;
-	dai->num_dapm_routes = ARRAY_SIZE(mtk_dai_pcm_routes);
 	return 0;
 }

@@ -19,6 +19,7 @@
 
 #include "hw.h"
 #include "ce.h"
+#include "pci.h"
 
 struct ath10k_snoc_drv_priv {
 	enum ath10k_hw_rev hw_rev;

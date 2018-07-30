@@ -455,10 +455,8 @@ static int altera_cvp_probe(struct pci_dev *pdev,
 
 	mgr = fpga_mgr_create(&pdev->dev, conf->mgr_name,
 			      &altera_cvp_ops, conf);
-	if (!mgr) {
-		ret = -ENOMEM;
-		goto err_unmap;
-	}
+	if (!mgr)
+		return -ENOMEM;
 
 	pci_set_drvdata(pdev, mgr);
 

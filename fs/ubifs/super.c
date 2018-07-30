@@ -1843,8 +1843,7 @@ static void ubifs_put_super(struct super_block *sb)
 	mutex_unlock(&c->umount_mutex);
 }
 
-static int ubifs_remount_fs(struct super_block *sb, int *flags,
-			    char *data, size_t data_size)
+static int ubifs_remount_fs(struct super_block *sb, int *flags, char *data)
 {
 	int err;
 	struct ubifs_info *c = sb->s_fs_info;
@@ -2107,7 +2106,7 @@ static int sb_set(struct super_block *sb, void *data)
 }
 
 static struct dentry *ubifs_mount(struct file_system_type *fs_type, int flags,
-			const char *name, void *data, size_t data_size)
+			const char *name, void *data)
 {
 	struct ubi_volume_desc *ubi;
 	struct ubifs_info *c;

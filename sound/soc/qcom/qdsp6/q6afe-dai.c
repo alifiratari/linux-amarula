@@ -81,6 +81,7 @@ static int q6slim_hw_params(struct snd_pcm_substream *substream,
 	struct q6afe_dai_data *dai_data = dev_get_drvdata(dai->dev);
 	struct q6afe_slim_cfg *slim = &dai_data->port_config[dai->id].slim;
 
+	slim->num_channels = params_channels(params);
 	slim->sample_rate = params_rate(params);
 
 	switch (params_format(params)) {
@@ -314,9 +315,6 @@ static void q6afe_dai_shutdown(struct snd_pcm_substream *substream,
 	struct q6afe_dai_data *dai_data = dev_get_drvdata(dai->dev);
 	int rc;
 
-	if (!dai_data->is_port_started[dai->id])
-		return;
-
 	rc = q6afe_port_stop(dai_data->port[dai->id]);
 	if (rc < 0)
 		dev_err(dai->dev, "fail to close AFE port (%d)\n", rc);
@@ -384,31 +382,23 @@ static int q6slim_set_channel_map(struct snd_soc_dai *dai,
 	struct q6afe_port_config *pcfg = &dai_data->port_config[dai->id];
 	int i;
 
-	if (dai->id & 0x1) {
-		/* TX */
-		if (!tx_slot) {
-			pr_err("%s: tx slot not found\n", __func__);
-			return -EINVAL;
-		}
-
-		for (i = 0; i < tx_num; i++)
-			pcfg->slim.ch_mapping[i] = tx_slot[i];
-
-		pcfg->slim.num_channels = tx_num;
-
-
-	} else {
-		if (!rx_slot) {
-			pr_err("%s: rx slot not found\n", __func__);
-			return -EINVAL;
-		}
-
-		for (i = 0; i < rx_num; i++)
-			pcfg->slim.ch_mapping[i] =   rx_slot[i];
-
-		pcfg->slim.num_channels = rx_num;
-
+	if (!rx_slot) {
+		pr_err("%s: rx slot not found\n", __func__);
+		return -EINVAL;
 	}
+
+	for (i = 0; i < rx_num; i++) {
+		pcfg->slim.ch_mapping[i] =   rx_slot[i];
+		pr_debug("%s: find number of channels[%d] ch[%d]\n",
+		       __func__, i, rx_slot[i]);
+	}
+
+	pcfg->slim.num_channels = rx_num;
+
+	pr_debug("%s: SLIMBUS_%d_RX cnt[%d] ch[%d %d]\n", __func__,
+		(dai->id - SLIMBUS_0_RX) / 2, rx_num,
+		pcfg->slim.ch_mapping[0],
+		pcfg->slim.ch_mapping[1]);
 
 	return 0;
 }
@@ -452,14 +442,6 @@ static const struct snd_soc_dapm_route q6afe_dapm_routes[] = {
 	{"Slimbus4 Playback", NULL, "SLIMBUS_4_RX"},
 	{"Slimbus5 Playback", NULL, "SLIMBUS_5_RX"},
 	{"Slimbus6 Playback", NULL, "SLIMBUS_6_RX"},
-
-	{"SLIMBUS_0_TX", NULL, "Slimbus Capture"},
-	{"SLIMBUS_1_TX", NULL, "Slimbus1 Capture"},
-	{"SLIMBUS_2_TX", NULL, "Slimbus2 Capture"},
-	{"SLIMBUS_3_TX", NULL, "Slimbus3 Capture"},
-	{"SLIMBUS_4_TX", NULL, "Slimbus4 Capture"},
-	{"SLIMBUS_5_TX", NULL, "Slimbus5 Capture"},
-	{"SLIMBUS_6_TX", NULL, "Slimbus6 Capture"},
 
 	{"Primary MI2S Playback", NULL, "PRI_MI2S_RX"},
 	{"Secondary MI2S Playback", NULL, "SEC_MI2S_RX"},
@@ -655,24 +637,6 @@ static struct snd_soc_dai_driver q6afe_dais[] = {
 			.rate_max = 192000,
 		},
 	}, {
-		.name = "SLIMBUS_0_TX",
-		.ops = &q6slim_ops,
-		.id = SLIMBUS_0_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
-		.capture = {
-			.stream_name = "Slimbus Capture",
-			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
-				 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_96000 |
-				 SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE |
-				   SNDRV_PCM_FMTBIT_S24_LE,
-			.channels_min = 1,
-			.channels_max = 8,
-			.rate_min = 8000,
-			.rate_max = 192000,
-		},
-	}, {
 		.playback = {
 			.stream_name = "Slimbus1 Playback",
 			.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000 |
@@ -691,24 +655,6 @@ static struct snd_soc_dai_driver q6afe_dais[] = {
 		.probe = msm_dai_q6_dai_probe,
 		.remove = msm_dai_q6_dai_remove,
 	}, {
-		.name = "SLIMBUS_1_TX",
-		.ops = &q6slim_ops,
-		.id = SLIMBUS_1_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
-		.capture = {
-			.stream_name = "Slimbus1 Capture",
-			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
-				 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_96000 |
-				 SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE |
-				   SNDRV_PCM_FMTBIT_S24_LE,
-			.channels_min = 1,
-			.channels_max = 8,
-			.rate_min = 8000,
-			.rate_max = 192000,
-		},
-	}, {
 		.playback = {
 			.stream_name = "Slimbus2 Playback",
 			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
@@ -726,25 +672,6 @@ static struct snd_soc_dai_driver q6afe_dais[] = {
 		.id = SLIMBUS_2_RX,
 		.probe = msm_dai_q6_dai_probe,
 		.remove = msm_dai_q6_dai_remove,
-
-	}, {
-		.name = "SLIMBUS_2_TX",
-		.ops = &q6slim_ops,
-		.id = SLIMBUS_2_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
-		.capture = {
-			.stream_name = "Slimbus2 Capture",
-			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
-				 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_96000 |
-				 SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE |
-				   SNDRV_PCM_FMTBIT_S24_LE,
-			.channels_min = 1,
-			.channels_max = 8,
-			.rate_min = 8000,
-			.rate_max = 192000,
-		},
 	}, {
 		.playback = {
 			.stream_name = "Slimbus3 Playback",
@@ -763,25 +690,6 @@ static struct snd_soc_dai_driver q6afe_dais[] = {
 		.id = SLIMBUS_3_RX,
 		.probe = msm_dai_q6_dai_probe,
 		.remove = msm_dai_q6_dai_remove,
-
-	}, {
-		.name = "SLIMBUS_3_TX",
-		.ops = &q6slim_ops,
-		.id = SLIMBUS_3_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
-		.capture = {
-			.stream_name = "Slimbus3 Capture",
-			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
-				 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_96000 |
-				 SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE |
-				   SNDRV_PCM_FMTBIT_S24_LE,
-			.channels_min = 1,
-			.channels_max = 8,
-			.rate_min = 8000,
-			.rate_max = 192000,
-		},
 	}, {
 		.playback = {
 			.stream_name = "Slimbus4 Playback",
@@ -800,25 +708,6 @@ static struct snd_soc_dai_driver q6afe_dais[] = {
 		.id = SLIMBUS_4_RX,
 		.probe = msm_dai_q6_dai_probe,
 		.remove = msm_dai_q6_dai_remove,
-
-	}, {
-		.name = "SLIMBUS_4_TX",
-		.ops = &q6slim_ops,
-		.id = SLIMBUS_4_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
-		.capture = {
-			.stream_name = "Slimbus4 Capture",
-			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
-				 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_96000 |
-				 SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE |
-				   SNDRV_PCM_FMTBIT_S24_LE,
-			.channels_min = 1,
-			.channels_max = 8,
-			.rate_min = 8000,
-			.rate_max = 192000,
-		},
 	}, {
 		.playback = {
 			.stream_name = "Slimbus5 Playback",
@@ -837,25 +726,6 @@ static struct snd_soc_dai_driver q6afe_dais[] = {
 		.id = SLIMBUS_5_RX,
 		.probe = msm_dai_q6_dai_probe,
 		.remove = msm_dai_q6_dai_remove,
-
-	}, {
-		.name = "SLIMBUS_5_TX",
-		.ops = &q6slim_ops,
-		.id = SLIMBUS_5_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
-		.capture = {
-			.stream_name = "Slimbus5 Capture",
-			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
-				 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_96000 |
-				 SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE |
-				   SNDRV_PCM_FMTBIT_S24_LE,
-			.channels_min = 1,
-			.channels_max = 8,
-			.rate_min = 8000,
-			.rate_max = 192000,
-		},
 	}, {
 		.playback = {
 			.stream_name = "Slimbus6 Playback",
@@ -874,25 +744,6 @@ static struct snd_soc_dai_driver q6afe_dais[] = {
 		.id = SLIMBUS_6_RX,
 		.probe = msm_dai_q6_dai_probe,
 		.remove = msm_dai_q6_dai_remove,
-
-	}, {
-		.name = "SLIMBUS_6_TX",
-		.ops = &q6slim_ops,
-		.id = SLIMBUS_6_TX,
-		.probe = msm_dai_q6_dai_probe,
-		.remove = msm_dai_q6_dai_remove,
-		.capture = {
-			.stream_name = "Slimbus6 Capture",
-			.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
-				 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_96000 |
-				 SNDRV_PCM_RATE_192000,
-			.formats = SNDRV_PCM_FMTBIT_S16_LE |
-				   SNDRV_PCM_FMTBIT_S24_LE,
-			.channels_min = 1,
-			.channels_max = 8,
-			.rate_min = 8000,
-			.rate_max = 192000,
-		},
 	}, {
 		.playback = {
 			.stream_name = "Primary MI2S Playback",
@@ -1329,7 +1180,7 @@ static void of_q6afe_parse_dai_data(struct device *dev,
 		int id, i, num_lines;
 
 		ret = of_property_read_u32(node, "reg", &id);
-		if (ret || id < 0 || id >= AFE_PORT_MAX) {
+		if (ret || id > AFE_PORT_MAX) {
 			dev_err(dev, "valid dai id not found:%d\n", ret);
 			continue;
 		}
@@ -1439,16 +1290,9 @@ static int q6afe_dai_dev_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id q6afe_dai_device_id[] = {
-	{ .compatible = "qcom,q6afe-dais" },
-	{},
-};
-MODULE_DEVICE_TABLE(of, q6afe_dai_device_id);
-
 static struct platform_driver q6afe_dai_platform_driver = {
 	.driver = {
 		.name = "q6afe-dai",
-		.of_match_table = of_match_ptr(q6afe_dai_device_id),
 	},
 	.probe = q6afe_dai_dev_probe,
 	.remove = q6afe_dai_dev_remove,

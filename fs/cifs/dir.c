@@ -465,7 +465,8 @@ out_err:
 
 int
 cifs_atomic_open(struct inode *inode, struct dentry *direntry,
-		 struct file *file, unsigned oflags, umode_t mode)
+		 struct file *file, unsigned oflags, umode_t mode,
+		 int *opened)
 {
 	int rc;
 	unsigned int xid;
@@ -538,9 +539,9 @@ cifs_atomic_open(struct inode *inode, struct dentry *direntry,
 	}
 
 	if ((oflags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL))
-		file->f_mode |= FMODE_CREATED;
+		*opened |= FILE_CREATED;
 
-	rc = finish_open(file, direntry, generic_file_open);
+	rc = finish_open(file, direntry, generic_file_open, opened);
 	if (rc) {
 		if (server->ops->close)
 			server->ops->close(xid, tcon, &fid);

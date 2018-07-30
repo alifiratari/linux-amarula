@@ -150,7 +150,6 @@ struct msm_drm_private {
 	struct shrinker shrinker;
 
 	struct msm_vblank_ctrl vblank_ctrl;
-	struct drm_atomic_state *pm_state;
 };
 
 struct msm_format {

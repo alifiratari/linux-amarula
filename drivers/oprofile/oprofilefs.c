@@ -238,8 +238,7 @@ struct dentry *oprofilefs_mkdir(struct dentry *parent, char const *name)
 }
 
 
-static int oprofilefs_fill_super(struct super_block *sb,
-				 void *data, size_t data_size, int silent)
+static int oprofilefs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *root_inode;
 
@@ -266,10 +265,9 @@ static int oprofilefs_fill_super(struct super_block *sb,
 
 
 static struct dentry *oprofilefs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_single(fs_type, flags, data, data_size,
-			    oprofilefs_fill_super);
+	return mount_single(fs_type, flags, data, oprofilefs_fill_super);
 }
 
 

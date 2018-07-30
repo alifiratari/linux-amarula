@@ -12,7 +12,6 @@
 #include <linux/completion.h>
 #include <linux/delay.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/gpio/consumer.h>
@@ -241,28 +240,22 @@ static int tpd_probe(struct platform_device *pdev)
 
 	gpio = devm_gpiod_get_index_optional(&pdev->dev, NULL, 0,
 		GPIOD_OUT_LOW);
-	if (IS_ERR(gpio)) {
-		r = PTR_ERR(gpio);
+	if (IS_ERR(gpio))
 		goto err_gpio;
-	}
 
 	ddata->ct_cp_hpd_gpio = gpio;
 
 	gpio = devm_gpiod_get_index_optional(&pdev->dev, NULL, 1,
 		GPIOD_OUT_LOW);
-	if (IS_ERR(gpio)) {
-		r = PTR_ERR(gpio);
+	if (IS_ERR(gpio))
 		goto err_gpio;
-	}
 
 	ddata->ls_oe_gpio = gpio;
 
 	gpio = devm_gpiod_get_index(&pdev->dev, NULL, 2,
 		GPIOD_IN);
-	if (IS_ERR(gpio)) {
-		r = PTR_ERR(gpio);
+	if (IS_ERR(gpio))
 		goto err_gpio;
-	}
 
 	ddata->hpd_gpio = gpio;
 

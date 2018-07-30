@@ -476,11 +476,7 @@ static int prepare_shadow_batch_buffer(struct intel_vgpu_workload *workload)
 			i915_gem_obj_finish_shmem_access(bb->obj);
 			bb->accessing = false;
 
-			ret = i915_vma_move_to_active(bb->vma,
-						      workload->req,
-						      0);
-			if (ret)
-				goto err;
+			i915_vma_move_to_active(bb->vma, workload->req, 0);
 		}
 	}
 	return 0;

@@ -317,8 +317,7 @@ void bfs_dump_imap(const char *prefix, struct super_block *s)
 #endif
 }
 
-static int bfs_fill_super(struct super_block *s, void *data, size_t data_size,
-			  int silent)
+static int bfs_fill_super(struct super_block *s, void *data, int silent)
 {
 	struct buffer_head *bh, *sbh;
 	struct bfs_super_block *bfs_sb;
@@ -351,8 +350,7 @@ static int bfs_fill_super(struct super_block *s, void *data, size_t data_size,
 
 	s->s_magic = BFS_MAGIC;
 
-	if (le32_to_cpu(bfs_sb->s_start) > le32_to_cpu(bfs_sb->s_end) ||
-	    le32_to_cpu(bfs_sb->s_start) < BFS_BSIZE) {
+	if (le32_to_cpu(bfs_sb->s_start) > le32_to_cpu(bfs_sb->s_end)) {
 		printf("Superblock is corrupted\n");
 		goto out1;
 	}
@@ -361,11 +359,9 @@ static int bfs_fill_super(struct super_block *s, void *data, size_t data_size,
 					sizeof(struct bfs_inode)
 					+ BFS_ROOT_INO - 1;
 	imap_len = (info->si_lasti / 8) + 1;
-	info->si_imap = kzalloc(imap_len, GFP_KERNEL | __GFP_NOWARN);
-	if (!info->si_imap) {
-		printf("Cannot allocate %u bytes\n", imap_len);
+	info->si_imap = kzalloc(imap_len, GFP_KERNEL);
+	if (!info->si_imap)
 		goto out1;
-	}
 	for (i = 0; i < BFS_ROOT_INO; i++)
 		set_bit(i, info->si_imap);
 
@@ -464,10 +460,9 @@ out:
 }
 
 static struct dentry *bfs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data, size_t data_size)
+	int flags, const char *dev_name, void *data)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, data_size,
-			  bfs_fill_super);
+	return mount_bdev(fs_type, flags, dev_name, data, bfs_fill_super);
 }
 
 static struct file_system_type bfs_fs_type = {

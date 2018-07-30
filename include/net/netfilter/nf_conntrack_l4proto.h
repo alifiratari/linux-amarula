@@ -36,7 +36,7 @@ struct nf_conntrack_l4proto {
 			     struct net *net, struct nf_conntrack_tuple *tuple);
 
 	/* Invert the per-proto part of the tuple: ie. turn xmit into reply.
-	 * Only used by icmp, most protocols use a generic version.
+	 * Some packets can't be inverted: return 0 in that case.
 	 */
 	bool (*invert_tuple)(struct nf_conntrack_tuple *inverse,
 			     const struct nf_conntrack_tuple *orig);
@@ -45,12 +45,13 @@ struct nf_conntrack_l4proto {
 	int (*packet)(struct nf_conn *ct,
 		      const struct sk_buff *skb,
 		      unsigned int dataoff,
-		      enum ip_conntrack_info ctinfo);
+		      enum ip_conntrack_info ctinfo,
+		      unsigned int *timeouts);
 
 	/* Called when a new connection for this protocol found;
 	 * returns TRUE if it's OK.  If so, packet() called next. */
 	bool (*new)(struct nf_conn *ct, const struct sk_buff *skb,
-		    unsigned int dataoff);
+		    unsigned int dataoff, unsigned int *timeouts);
 
 	/* Called when a conntrack entry is destroyed */
 	void (*destroy)(struct nf_conn *ct);
@@ -61,6 +62,9 @@ struct nf_conntrack_l4proto {
 
 	/* called by gc worker if table is full */
 	bool (*can_early_drop)(const struct nf_conn *ct);
+
+	/* Return the array of timeouts for this protocol. */
+	unsigned int *(*get_timeouts)(struct net *net);
 
 	/* convert protoinfo to nfnetink attributes */
 	int (*to_nlattr)(struct sk_buff *skb, struct nlattr *nla,
@@ -130,6 +134,10 @@ void nf_ct_l4proto_pernet_unregister(struct net *net,
 /* Protocol global registration. */
 int nf_ct_l4proto_register_one(const struct nf_conntrack_l4proto *proto);
 void nf_ct_l4proto_unregister_one(const struct nf_conntrack_l4proto *proto);
+int nf_ct_l4proto_register(const struct nf_conntrack_l4proto * const proto[],
+			   unsigned int num_proto);
+void nf_ct_l4proto_unregister(const struct nf_conntrack_l4proto * const proto[],
+			      unsigned int num_proto);
 
 /* Generic netlink helpers */
 int nf_ct_port_tuple_to_nlattr(struct sk_buff *skb,

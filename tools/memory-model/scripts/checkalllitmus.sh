@@ -9,7 +9,7 @@
 # appended.
 #
 # Usage:
-#	checkalllitmus.sh [ directory ]
+#	sh checkalllitmus.sh [ directory ]
 #
 # The LINUX_HERD_OPTIONS environment variable may be used to specify
 # arguments to herd, whose default is defined by the checklitmus.sh script.

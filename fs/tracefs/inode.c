@@ -225,8 +225,7 @@ static int tracefs_apply_options(struct super_block *sb)
 	return 0;
 }
 
-static int tracefs_remount(struct super_block *sb, int *flags,
-			   char *data, size_t data_size)
+static int tracefs_remount(struct super_block *sb, int *flags, char *data)
 {
 	int err;
 	struct tracefs_fs_info *fsi = sb->s_fs_info;
@@ -265,8 +264,7 @@ static const struct super_operations tracefs_super_operations = {
 	.show_options	= tracefs_show_options,
 };
 
-static int trace_fill_super(struct super_block *sb,
-			    void *data, size_t data_size, int silent)
+static int trace_fill_super(struct super_block *sb, void *data, int silent)
 {
 	static const struct tree_descr trace_files[] = {{""}};
 	struct tracefs_fs_info *fsi;
@@ -301,9 +299,9 @@ fail:
 
 static struct dentry *trace_mount(struct file_system_type *fs_type,
 			int flags, const char *dev_name,
-			void *data, size_t data_size)
+			void *data)
 {
-	return mount_single(fs_type, flags, data, data_size, trace_fill_super);
+	return mount_single(fs_type, flags, data, trace_fill_super);
 }
 
 static struct file_system_type trace_fs_type = {

@@ -69,8 +69,7 @@ struct kmem_cache *nilfs_segbuf_cachep;
 struct kmem_cache *nilfs_btree_path_cache;
 
 static int nilfs_setup_super(struct super_block *sb, int is_mount);
-static int nilfs_remount(struct super_block *sb, int *flags,
-			 char *data, size_t data_size);
+static int nilfs_remount(struct super_block *sb, int *flags, char *data);
 
 void __nilfs_msg(struct super_block *sb, const char *level, const char *fmt,
 		 ...)
@@ -835,7 +834,7 @@ static int nilfs_setup_super(struct super_block *sb, int is_mount)
 		sbp[0]->s_max_mnt_count = cpu_to_le16(NILFS_DFL_MAX_MNT_COUNT);
 
 	sbp[0]->s_mnt_count = cpu_to_le16(mnt_count + 1);
-	sbp[0]->s_mtime = cpu_to_le64(ktime_get_real_seconds());
+	sbp[0]->s_mtime = cpu_to_le64(get_seconds());
 
 skip_mount_setup:
 	sbp[0]->s_state =
@@ -1119,8 +1118,7 @@ nilfs_fill_super(struct super_block *sb, void *data, int silent)
 	return err;
 }
 
-static int nilfs_remount(struct super_block *sb, int *flags,
-			 char *data, size_t data_size)
+static int nilfs_remount(struct super_block *sb, int *flags, char *data)
 {
 	struct the_nilfs *nilfs = sb->s_fs_info;
 	unsigned long old_sb_flags;
@@ -1280,7 +1278,7 @@ static int nilfs_test_bdev_super(struct super_block *s, void *data)
 
 static struct dentry *
 nilfs_mount(struct file_system_type *fs_type, int flags,
-	    const char *dev_name, void *data, size_t data_size)
+	     const char *dev_name, void *data)
 {
 	struct nilfs_super_data sd;
 	struct super_block *s;
@@ -1348,7 +1346,7 @@ nilfs_mount(struct file_system_type *fs_type, int flags,
 			 * Try remount to setup mount states if the current
 			 * tree is not mounted and only snapshots use this sb.
 			 */
-			err = nilfs_remount(s, &flags, data, data_size);
+			err = nilfs_remount(s, &flags, data);
 			if (err)
 				goto failed_super;
 		}

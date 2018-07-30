@@ -1217,11 +1217,16 @@ kprobe_perf_func(struct trace_kprobe *tk, struct pt_regs *regs)
 
 		/*
 		 * We need to check and see if we modified the pc of the
-		 * pt_regs, and if so return 1 so that we don't do the
-		 * single stepping.
+		 * pt_regs, and if so clear the kprobe and return 1 so that we
+		 * don't do the single stepping.
+		 * The ftrace kprobe handler leaves it up to us to re-enable
+		 * preemption here before returning if we've modified the ip.
 		 */
-		if (orig_ip != instruction_pointer(regs))
+		if (orig_ip != instruction_pointer(regs)) {
+			reset_current_kprobe();
+			preempt_enable_no_resched();
 			return 1;
+		}
 		if (!ret)
 			return 0;
 	}
@@ -1475,10 +1480,8 @@ create_local_trace_kprobe(char *func, void *addr, unsigned long offs,
 	}
 
 	ret = __register_trace_kprobe(tk);
-	if (ret < 0) {
-		kfree(tk->tp.call.print_fmt);
+	if (ret < 0)
 		goto error;
-	}
 
 	return &tk->tp.call;
 error:
@@ -1498,8 +1501,6 @@ void destroy_local_trace_kprobe(struct trace_event_call *event_call)
 	}
 
 	__unregister_trace_kprobe(tk);
-
-	kfree(tk->tp.call.print_fmt);
 	free_trace_kprobe(tk);
 }
 #endif /* CONFIG_PERF_EVENTS */

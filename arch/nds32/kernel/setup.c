@@ -278,8 +278,7 @@ static void __init setup_memory(void)
 
 void __init setup_arch(char **cmdline_p)
 {
-	early_init_devtree(__atags_pointer ? \
-		phys_to_virt(__atags_pointer) : __dtb_start);
+	early_init_devtree( __dtb_start);
 
 	setup_cpuinfo();
 
