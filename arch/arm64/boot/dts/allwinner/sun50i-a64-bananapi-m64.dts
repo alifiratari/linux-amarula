@@ -45,6 +45,7 @@
 #include "sun50i-a64.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pwm/pwm.h>
 
 / {
 	model = "BananaPi-M64";
@@ -54,6 +55,14 @@
 		ethernet0 = &emac;
 		serial0 = &uart0;
 		serial1 = &uart1;
+	};
+
+	backlight_dsi: backlight-dsi {
+		compatible = "pwm-backlight";
+		pwms = <&pwm 0 50000 PWM_POLARITY_INVERTED>;
+		brightness-levels = <1 2 4 8 16 32 64 128 255>;
+		default-brightness-level = <8>;
+		enable-gpios = <&r_pio 0 5 GPIO_ACTIVE_HIGH>; /* PD5 */
 	};
 
 	chosen {
@@ -91,6 +100,15 @@
 		};
 	};
 
+	reg_panel: reg-panel {
+		compatible = "regulator-fixed";
+		regulator-name = "panel";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&pio 3 7 GPIO_ACTIVE_HIGH>; /* PD7 */
+		enable-active-high;
+	};
+
 	wifi_pwrseq: wifi_pwrseq {
 		compatible = "mmc-pwrseq-simple";
 		reset-gpios = <&r_pio 0 2 GPIO_ACTIVE_LOW>; /* PL2 */
@@ -99,6 +117,23 @@
 
 &de {
 	status = "okay";
+};
+
+&dphy {
+	status = "okay";
+};
+
+&dsi {
+	mipi-supply = <&reg_dldo1>;
+	status = "okay";
+
+	panel@0 {
+		compatible = "bananapi,s070wv20-ct16", "simple-panel";
+		reg = <0>;
+		power-supply = <&reg_panel>; /* PD7 */
+		reset-gpios = <&pio 3 6 GPIO_ACTIVE_LOW>; /* PD6 */
+		backlight = <&backlight_dsi>;
+	};
 };
 
 &ehci0 {
@@ -190,6 +225,12 @@
 };
 
 &ohci1 {
+	status = "okay";
+};
+
+&pwm {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pwm_pin>;
 	status = "okay";
 };
 
