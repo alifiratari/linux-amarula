@@ -2646,6 +2646,36 @@ static const struct panel_desc_dsi auo_b080uan01 = {
 	.lanes = 4,
 };
 
+static const struct drm_display_mode techstar_ts8550b_mode = {
+	.clock 		= 29000,
+	.hdisplay	= 480,
+	.hsync_start	= 480 + 26,
+	.hsync_end	= 480 + 26 + 12,
+	.htotal		= 480 + 26 + 12 + 24,
+	.vdisplay	= 854,
+	.vsync_start	= 854 + 10,
+	.vsync_end	= 854 + 10 + 8,
+	.vtotal		= 854 + 10 + 8 + 12,
+	.vrefresh	= 60,
+};
+
+static const struct panel_desc_dsi techstar_ts8550b = {
+	.desc = {
+		.modes = &techstar_ts8550b_mode,
+		.num_modes = 1,
+		.bpc = 6,
+		.size = {
+			.width = 69,
+			.height = 139,
+		},
+	},
+	//.flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS,
+	.flags = MIPI_DSI_MODE_VIDEO_SYNC_PULSE,
+	.format = MIPI_DSI_FMT_RGB888,
+	.lanes = 2,
+};
+
+
 static const struct drm_display_mode bananapi_s070wv20_ct16_mode = {
 	.clock = 30000,
 	.hdisplay = 800,
@@ -2808,6 +2838,9 @@ static const struct of_device_id dsi_of_match[] = {
 	}, {
 		.compatible = "panasonic,vvx10f004b00",
 		.data = &panasonic_vvx10f004b00
+	}, {
+		.compatible = "techstar,ts8550b",
+		.data = &techstar_ts8550b
 	}, {
 		/* sentinel */
 	}

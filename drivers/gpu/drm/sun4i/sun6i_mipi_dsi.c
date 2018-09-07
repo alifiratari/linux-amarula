@@ -999,6 +999,18 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
 		return PTR_ERR(dsi->regs);
 	}
 
+	dsi->regulator = devm_regulator_get(dev, "mipi");
+	if (IS_ERR(dsi->regulator)) {
+		dev_err(dev, "Couldn't get regulator\n");
+		return PTR_ERR(dsi->regulator);
+	}
+
+	ret = regulator_enable(dsi->regulator);
+	if (ret) {
+		dev_err(dev, "Failed to enable MIPI regulator\n");
+		return ret;
+	}
+
 	dsi->reset = devm_reset_control_get_shared(dev, NULL);
 	if (IS_ERR(dsi->reset)) {
 		dev_err(dev, "Couldn't get our reset line\n");
