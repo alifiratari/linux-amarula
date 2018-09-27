@@ -1044,6 +1044,12 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
 		return PTR_ERR(dsi->reset);
 	}
 
+	dsi->bus_clk = devm_clk_get(dev, "bus");
+	if (IS_ERR(dsi->bus_clk)) {
+		dev_err(dev, "Couldn't get the DSI bus clock\n");
+		return PTR_ERR(dsi->bus_clk);
+	}
+
 	if (dsi->variant->has_mod_clk) {
 		dsi->mod_clk = devm_clk_get(dev, "mod");
 		if (IS_ERR(dsi->mod_clk)) {
@@ -1052,6 +1058,7 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
 		}
 	}
 
+	clk_prepare_enable(dsi->bus_clk);
 	/*
 	 * In order to operate properly, that clock seems to be always
 	 * set to 297MHz.
@@ -1105,6 +1112,7 @@ static int sun6i_dsi_remove(struct platform_device *pdev)
 	sun6i_dphy_remove(dsi);
 	if (dsi->variant->has_mod_clk)
 		clk_rate_exclusive_put(dsi->mod_clk);
+	clk_disable_unprepare(dsi->bus_clk);
 
 	return 0;
 }
