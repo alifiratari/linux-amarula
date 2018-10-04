@@ -538,6 +538,9 @@ static const struct of_device_id axp20x_battery_ps_id[] = {
 		.compatible = "x-powers,axp221-battery-power-supply",
 		.data = (void *)&axp221_data,
 	}, {
+		.compatible = "x-powers,axp803-battery-power-supply",
+		.data = (void *)&axp813_data,
+	}, {
 		.compatible = "x-powers,axp813-battery-power-supply",
 		.data = (void *)&axp813_data,
 	}, { /* sentinel */ },

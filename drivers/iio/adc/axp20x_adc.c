@@ -641,6 +641,7 @@ static const struct axp_data axp813_data = {
 static const struct of_device_id axp20x_adc_of_match[] = {
 	{ .compatible = "x-powers,axp209-adc", .data = (void *)&axp20x_data, },
 	{ .compatible = "x-powers,axp221-adc", .data = (void *)&axp22x_data, },
+	{ .compatible = "x-powers,axp803-adc", .data = (void *)&axp813_data, },
 	{ .compatible = "x-powers,axp813-adc", .data = (void *)&axp813_data, },
 	{ /* sentinel */ }
 };

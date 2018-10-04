@@ -387,6 +387,7 @@ static int axp20x_build_funcs_groups(struct platform_device *pdev)
 
 static const struct of_device_id axp20x_pctl_match[] = {
 	{ .compatible = "x-powers,axp209-gpio", .data = &axp20x_data, },
+	{ .compatible = "x-powers,axp803-gpio", .data = &axp813_data, },
 	{ .compatible = "x-powers,axp813-gpio", .data = &axp813_data, },
 	{ }
 };

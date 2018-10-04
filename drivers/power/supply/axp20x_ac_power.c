@@ -27,6 +27,23 @@
 #define AXP20X_PWR_STATUS_ACIN_PRESENT	BIT(7)
 #define AXP20X_PWR_STATUS_ACIN_AVAIL	BIT(6)
 
+#define AXP8X3_PWR_ACIN_VHOLD		GENMASK(5, 3)
+#define AXP8X3_PWR_ACIN_VHOLD_4_0V	(0 << 3)
+#define AXP8X3_PWR_ACIN_VHOLD_4_1V	(1 << 3)
+#define AXP8X3_PWR_ACIN_VHOLD_4_2V	(2 << 3)
+#define AXP8X3_PWR_ACIN_VHOLD_4_3V	(3 << 3)
+#define AXP8X3_PWR_ACIN_VHOLD_4_4V	(4 << 3)
+#define AXP8X3_PWR_ACIN_VHOLD_4_5V	(5 << 3)
+#define AXP8X3_PWR_ACIN_VHOLD_4_6V	(6 << 3)
+#define AXP8X3_PWR_ACIN_VHOLD_4_7V	(7 << 3)
+#define AXP8X3_PWR_ACIN_CURR_LIMIT	GENMASK(2, 0)
+#define AXP8X3_PWR_ACIN_CURR_1_5A	0
+#define AXP8X3_PWR_ACIN_CURR_2_0A	1
+#define AXP8X3_PWR_ACIN_CURR_2_5A	2
+#define AXP8X3_PWR_ACIN_CURR_3_0A	3
+#define AXP8X3_PWR_ACIN_CURR_3_5A	4
+#define AXP8X3_PWR_ACIN_CURR_4_0A	5
+
 #define DRVNAME "axp20x-ac-power-supply"
 
 struct axp20x_ac_power {
@@ -102,11 +119,159 @@ static int axp20x_ac_power_get_property(struct power_supply *psy,
 
 		return 0;
 
+	case POWER_SUPPLY_PROP_VOLTAGE_MIN:
+		ret = regmap_read(power->regmap, AXP803_ACIN_PATH_CTRL, &reg);
+		if (ret)
+			return ret;
+
+		switch (reg & AXP8X3_PWR_ACIN_VHOLD) {
+		case AXP8X3_PWR_ACIN_VHOLD_4_0V:
+			val->intval = 4000000;
+			break;
+		case AXP8X3_PWR_ACIN_VHOLD_4_1V:
+			val->intval = 4100000;
+			break;
+		case AXP8X3_PWR_ACIN_VHOLD_4_2V:
+			val->intval = 4200000;
+			break;
+		case AXP8X3_PWR_ACIN_VHOLD_4_3V:
+			val->intval = 4300000;
+			break;
+		case AXP8X3_PWR_ACIN_VHOLD_4_4V:
+			val->intval = 4400000;
+			break;
+		case AXP8X3_PWR_ACIN_VHOLD_4_5V:
+			val->intval = 4500000;
+			break;
+		case AXP8X3_PWR_ACIN_VHOLD_4_6V:
+			val->intval = 4600000;
+			break;
+		case AXP8X3_PWR_ACIN_VHOLD_4_7V:
+			val->intval = 4700000;
+			break;
+		default:
+			return -EINVAL;
+		}
+
+		return 0;
+
+	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
+		ret = regmap_read(power->regmap, AXP803_ACIN_PATH_CTRL, &reg);
+		if (ret)
+			return ret;
+
+		switch (reg & AXP8X3_PWR_ACIN_CURR_LIMIT) {
+		case AXP8X3_PWR_ACIN_CURR_1_5A:
+			val->intval = 1500000;
+			break;
+		case AXP8X3_PWR_ACIN_CURR_2_0A:
+			val->intval = 2000000;
+			break;
+		case AXP8X3_PWR_ACIN_CURR_2_5A:
+			val->intval = 2500000;
+			break;
+		case AXP8X3_PWR_ACIN_CURR_3_0A:
+			val->intval = 3000000;
+			break;
+		case AXP8X3_PWR_ACIN_CURR_3_5A:
+			val->intval = 3500000;
+			break;
+		case AXP8X3_PWR_ACIN_CURR_4_0A:
+			val->intval = 4000000;
+			break;
+		default:
+			return -EINVAL;
+		}
+
+		return 0;
+
 	default:
 		return -EINVAL;
 	}
 
 	return -EINVAL;
+}
+
+static int axp20x_ac_power_set_property(struct power_supply *psy,
+					enum power_supply_property psp,
+					const union power_supply_propval *val)
+{
+	struct axp20x_ac_power *power = power_supply_get_drvdata(psy);
+	int setval;
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_VOLTAGE_MIN:
+		switch (val->intval) {
+		case 4000000:
+			setval = AXP8X3_PWR_ACIN_VHOLD_4_0V;
+			break;
+		case 4100000:
+			setval = AXP8X3_PWR_ACIN_VHOLD_4_1V;
+			break;
+		case 4200000:
+			setval = AXP8X3_PWR_ACIN_VHOLD_4_2V;
+			break;
+		case 4300000:
+			setval = AXP8X3_PWR_ACIN_VHOLD_4_3V;
+			break;
+		case 4400000:
+			setval = AXP8X3_PWR_ACIN_VHOLD_4_4V;
+			break;
+		case 4500000:
+			setval = AXP8X3_PWR_ACIN_VHOLD_4_5V;
+			break;
+		case 4600000:
+			setval = AXP8X3_PWR_ACIN_VHOLD_4_6V;
+			break;
+		case 4700000:
+			setval = AXP8X3_PWR_ACIN_VHOLD_4_7V;
+			break;
+
+		default:
+			return -EINVAL;
+		}
+		return regmap_update_bits(power->regmap, AXP803_ACIN_PATH_CTRL,
+					  AXP8X3_PWR_ACIN_VHOLD, setval);
+
+	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
+
+		switch (val->intval) {
+		case 1500000:
+			setval = AXP8X3_PWR_ACIN_CURR_1_5A;
+			break;
+		case 2000000:
+			setval = AXP8X3_PWR_ACIN_CURR_2_0A;
+			break;
+		case 2500000:
+			setval = AXP8X3_PWR_ACIN_CURR_2_5A;
+			break;
+		case 3000000:
+			setval = AXP8X3_PWR_ACIN_CURR_3_0A;
+			break;
+		case 3500000:
+			setval = AXP8X3_PWR_ACIN_CURR_3_5A;
+			break;
+		case 4000000:
+			setval = AXP8X3_PWR_ACIN_CURR_4_0A;
+			break;
+		default:
+			return -EINVAL;
+		}
+		return regmap_update_bits(power->regmap, AXP803_ACIN_PATH_CTRL,
+					  AXP8X3_PWR_ACIN_CURR_LIMIT, setval);
+
+	default:
+		return -EINVAL;
+	}
+
+	return -EINVAL;
+}
+
+static int axp20x_ac_power_prop_writeable(struct power_supply *psy,
+					  enum power_supply_property psp)
+{
+	return psp == POWER_SUPPLY_PROP_VOLTAGE_MIN ||
+	       psp == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT;
 }
 
 static enum power_supply_property axp20x_ac_power_properties[] = {
@@ -121,6 +286,14 @@ static enum power_supply_property axp22x_ac_power_properties[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_ONLINE,
+};
+
+static enum power_supply_property axp8x3_ac_power_properties[] = {
+	POWER_SUPPLY_PROP_HEALTH,
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_ONLINE,
+	POWER_SUPPLY_PROP_VOLTAGE_MIN,
+	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
 };
 
 static const struct power_supply_desc axp20x_ac_power_desc = {
@@ -139,6 +312,16 @@ static const struct power_supply_desc axp22x_ac_power_desc = {
 	.get_property = axp20x_ac_power_get_property,
 };
 
+static const struct power_supply_desc axp8x3_ac_power_desc = {
+	.name = "axp8x3-ac",
+	.type = POWER_SUPPLY_TYPE_MAINS,
+	.properties = axp8x3_ac_power_properties,
+	.num_properties = ARRAY_SIZE(axp8x3_ac_power_properties),
+	.property_is_writeable = axp20x_ac_power_prop_writeable,
+	.get_property = axp20x_ac_power_get_property,
+	.set_property = axp20x_ac_power_set_property,
+};
+
 struct axp_data {
 	const struct power_supply_desc	*power_desc;
 	bool				acin_adc;
@@ -151,6 +334,11 @@ static const struct axp_data axp20x_data = {
 
 static const struct axp_data axp22x_data = {
 	.power_desc = &axp22x_ac_power_desc,
+	.acin_adc = false,
+};
+
+static const struct axp_data axp8x3_data = {
+	.power_desc = &axp8x3_ac_power_desc,
 	.acin_adc = false,
 };
 
@@ -234,6 +422,12 @@ static const struct of_device_id axp20x_ac_power_match[] = {
 	}, {
 		.compatible = "x-powers,axp221-ac-power-supply",
 		.data = &axp22x_data,
+	}, {
+		.compatible = "x-powers,axp803-ac-power-supply",
+		.data = &axp8x3_data,
+	}, {
+		.compatible = "x-powers,axp813-ac-power-supply",
+		.data = &axp8x3_data,
 	}, { /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, axp20x_ac_power_match);
