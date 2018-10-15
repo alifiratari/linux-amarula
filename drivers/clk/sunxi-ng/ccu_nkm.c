@@ -128,6 +128,9 @@ static unsigned long ccu_nkm_round_rate(struct ccu_mux_internal *mux,
 	if (rate < nkm->min_rate)
 		return nkm->min_rate;
 
+	if (nkm->max_rate && rate > nkm->max_rate)
+		return nkm->max_rate;
+
 	ccu_nkm_find_best(*parent_rate, rate, &_nkm);
 
 	rate = *parent_rate * _nkm.n * _nkm.k / _nkm.m;
