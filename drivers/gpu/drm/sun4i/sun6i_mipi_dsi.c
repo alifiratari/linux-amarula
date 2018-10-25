@@ -947,6 +947,12 @@ static int sun6i_dsi_bind(struct device *dev, struct device *master,
 
 	dsi->drv = drv;
 
+	ret = regulator_enable(dsi->regulator);
+	if (ret) {
+		dev_err(dev, "Failed to enable regulator\n");
+		return ret;
+	}
+
 	drm_encoder_helper_add(&dsi->encoder,
 			       &sun6i_dsi_enc_helper_funcs);
 	ret = drm_encoder_init(drm,
@@ -978,6 +984,7 @@ static int sun6i_dsi_bind(struct device *dev, struct device *master,
 
 err_cleanup_connector:
 	drm_encoder_cleanup(&dsi->encoder);
+	regulator_disable(dsi->regulator);
 	return ret;
 }
 
@@ -987,6 +994,7 @@ static void sun6i_dsi_unbind(struct device *dev, struct device *master,
 	struct sun6i_dsi *dsi = dev_get_drvdata(dev);
 
 	drm_panel_detach(dsi->panel);
+	regulator_disable(dsi->regulator);
 }
 
 static const struct component_ops sun6i_dsi_ops = {
@@ -1018,6 +1026,12 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
 	if (IS_ERR(base)) {
 		dev_err(dev, "Couldn't map the DSI encoder registers\n");
 		return PTR_ERR(base);
+	}
+
+	dsi->regulator = devm_regulator_get(dev, "vcc-dsi");
+	if (IS_ERR(dsi->regulator)) {
+		dev_err(dev, "Couldn't get regulator\n");
+		return PTR_ERR(dsi->regulator);
 	}
 
 	dsi->regs = devm_regmap_init_mmio_clk(dev, "bus", base,
