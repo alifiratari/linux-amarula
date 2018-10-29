@@ -167,9 +167,9 @@ int sun6i_csi_set_power(struct sun6i_csi *csi, bool enable)
 		regmap_update_bits(regmap, CSI_EN_REG, CSI_EN_CSI_EN, 0);
 
 		clk_disable_unprepare(sdev->clk_ram);
+		clk_disable_unprepare(sdev->clk_mod);
 		if (sdev->variant->mod_rate)
 			clk_rate_exclusive_put(sdev->clk_mod);
-		clk_disable_unprepare(sdev->clk_mod);
 		reset_control_assert(sdev->rstc_bus);
 		return 0;
 	}
