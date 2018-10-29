@@ -462,7 +462,7 @@ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
 	struct mipi_dsi_device *device = dsi->device;
 	unsigned int Bpp = mipi_dsi_pixel_format_to_bpp(device->format) / 8;
 	unsigned int hblk_max;
-	u16 hbp, hfp, hsa, hblk, vblk;
+	u16 hbp, hfp_pkt_overhead, hfp, hsa, hblk, vblk;
 	size_t bytes;
 	u8 *buffer;
 
@@ -486,14 +486,6 @@ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
 		  (mode->htotal - mode->hsync_end) * Bpp - HBP_PACKET_OVERHEAD);
 
 	/*
-	 * The frontporch is set using a blanking packet (4 bytes +
-	 * payload + 2 bytes). Its minimal size is therefore 6 bytes
-	 */
-#define HFP_PACKET_OVERHEAD	6
-	hfp = max((unsigned int)HFP_PACKET_OVERHEAD,
-		  (mode->hsync_start - mode->hdisplay) * Bpp - HFP_PACKET_OVERHEAD);
-
-	/*
 	 * hblk seems to be the line + porches length.
 	 * The blank is set using a blanking packet (4 bytes + 4 bytes +
 	 * payload + 2 bytes). So minimal size is 10 bytes
@@ -502,6 +494,19 @@ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
 	hblk_max = (mode->htotal - (mode->hsync_end - mode->hsync_start)) * Bpp;
 	hblk_max -= HBLK_PACKET_OVERHEAD;
 	hblk = max_t(unsigned int, HBLK_PACKET_OVERHEAD, hblk_max);
+
+	/*
+	 * The frontporch is set using a blanking packet (4 bytes +
+	 * payload + 2 bytes). Its minimal size is therefore 6 bytes
+	 *
+	 * According to BSP code, extra 10 bytes(which is hblk packet overhead)
+	 * is adding for hfp packet overhead since hfp depends on hblk.
+	 */
+#define HFP_PACKET_OVERHEAD	6
+	hfp_pkt_overhead = (HFP_PACKET_OVERHEAD + HBLK_PACKET_OVERHEAD);
+	hfp = max((unsigned int)hfp_pkt_overhead,
+		  (mode->hsync_start - mode->hdisplay) * Bpp -
+		  hfp_pkt_overhead);
 
 	/*
 	 * And I'm not entirely sure what vblk is about. The driver in
