@@ -394,7 +394,14 @@ static void sun6i_dsi_setup_burst(struct sun6i_dsi *dsi,
 static void sun6i_dsi_setup_inst_loop(struct sun6i_dsi *dsi,
 				      struct drm_display_mode *mode)
 {
-	u16 delay = 50 - 1;
+	struct mipi_dsi_device *device = dsi->device;
+	u16 delay;
+
+	if (device->mode_flags == MIPI_DSI_MODE_VIDEO_BURST)
+		delay = (((mode->htotal - mode->hdisplay) * 150) /
+			((mode->clock / 1000) * 8)) - 50;
+	else
+		delay = 50 - 1;
 
 	regmap_write(dsi->regs, SUN6I_DSI_INST_LOOP_NUM_REG(0),
 		     SUN6I_DSI_INST_LOOP_NUM_N0(50 - 1) |
