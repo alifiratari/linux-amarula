@@ -65,6 +65,27 @@
 	status = "okay";
 };
 
+&i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1_pins>;
+	status = "okay";
+
+	touchscreen@5d {
+		compatible = "goodix,gt911";
+		reg = <0x5d>;
+		interrupt-parent = <&pio>;
+		interrupts = <7 4 IRQ_TYPE_EDGE_FALLING>; /* PH4 */
+//		irq-gpios = <&pio 7 4 GPIO_ACTIVE_HIGH>; /* CTP-INT PH4 */
+		reset-gpios = <&pio 7 8 GPIO_ACTIVE_LOW>; /* CTP-RST PH8 */
+		touchscreen-inverted-x;
+		touchscreen-inverted-y;
+	};
+};
+
+&i2c1_pins {
+	bias-pull-up;
+};
+
 &mmc1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&mmc1_pins>;
@@ -122,6 +143,14 @@
 };
 
 #include "axp803.dtsi"
+
+&ac_power_supply {
+	status = "okay";
+};
+
+&battery_power_supply {
+	status = "okay";
+};
 
 &reg_aldo1 {
 	regulator-always-on;

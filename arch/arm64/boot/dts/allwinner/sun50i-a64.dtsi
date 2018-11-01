@@ -123,8 +123,7 @@
 
 	de: display-engine {
 		compatible = "allwinner,sun50i-a64-display-engine";
-		allwinner,pipelines = <&mixer0>,
-				      <&mixer1>;
+		allwinner,pipelines = <&mixer0>;
 		status = "disabled";
 	};
 
@@ -522,6 +521,8 @@
 			i2c1_pins: i2c1_pins {
 				pins = "PH2", "PH3";
 				function = "i2c1";
+				drive-strength = <30>;
+				bias-pull-up;
 			};
 
 			mmc0_pins: mmc0-pins {
