@@ -479,59 +479,71 @@ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
 
 	/* Do all timing calculations up front to allocate buffer space */
 
-	/*
-	 * A sync period is composed of a blanking packet (4 bytes +
-	 * payload + 2 bytes) and a sync event packet (4 bytes). Its
-	 * minimal size is therefore 10 bytes
-	 */
-#define HSA_PACKET_OVERHEAD	10
-	hsa = max((unsigned int)HSA_PACKET_OVERHEAD,
-		  (mode->hsync_end - mode->hsync_start) * Bpp - HSA_PACKET_OVERHEAD);
-
-	/*
-	 * The backporch is set using a blanking packet (4 bytes +
-	 * payload + 2 bytes). Its minimal size is therefore 6 bytes
-	 */
-#define HBP_PACKET_OVERHEAD	6
-	hbp = max((unsigned int)HBP_PACKET_OVERHEAD,
-		  (mode->htotal - mode->hsync_end) * Bpp - HBP_PACKET_OVERHEAD);
-
-	/*
-	 * hblk seems to be the line + porches length.
-	 * The blank is set using a blanking packet (4 bytes + 4 bytes +
-	 * payload + 2 bytes). So minimal size is 10 bytes
-	 */
-#define HBLK_PACKET_OVERHEAD	10
-	hblk_max = (mode->htotal - (mode->hsync_end - mode->hsync_start)) * Bpp;
-	hblk_max -= HBLK_PACKET_OVERHEAD;
-	hblk = max_t(unsigned int, HBLK_PACKET_OVERHEAD, hblk_max);
-
-	/*
-	 * The frontporch is set using a blanking packet (4 bytes +
-	 * payload + 2 bytes). Its minimal size is therefore 6 bytes
-	 *
-	 * According to BSP code, extra 10 bytes(which is hblk packet overhead)
-	 * is adding for hfp packet overhead since hfp depends on hblk.
-	 */
-#define HFP_PACKET_OVERHEAD	6
-	hfp_pkt_overhead = (HFP_PACKET_OVERHEAD + HBLK_PACKET_OVERHEAD);
-	hfp = max((unsigned int)hfp_pkt_overhead,
-		  (mode->hsync_start - mode->hdisplay) * Bpp -
-		  hfp_pkt_overhead);
-
-	/*
-	 * The vertical blank is set using a blanking packet (4 bytes +
-	 * payload + 2 bytes). Its minimal size is therefore 6 bytes
-	 */
-#define VBLK_PACKET_OVERHEAD	6
-	if (device->lanes == 4) {
-		int tmp;
-
-		tmp = (mode->htotal * Bpp) * mode->vtotal -
-		      (hblk + VBLK_PACKET_OVERHEAD);
-		vblk = (device->lanes - tmp % device->lanes);
-	} else {
+	if (device->mode_flags == MIPI_DSI_MODE_VIDEO_BURST) {
+		hsa = 0;
+		hbp = 0;
+		hblk = mode->hdisplay * Bpp;
+		hfp = 0;
 		vblk = 0;
+	} else {
+		/*
+		 * A sync period is composed of a blanking packet (4 bytes +
+		 * payload + 2 bytes) and a sync event packet (4 bytes). Its
+		 * minimal size is therefore 10 bytes
+		 */
+#define HSA_PACKET_OVERHEAD	10
+		hsa = max((unsigned int)HSA_PACKET_OVERHEAD,
+			  (mode->hsync_end - mode->hsync_start) * Bpp -
+			  HSA_PACKET_OVERHEAD);
+
+		/*
+		 * The backporch is set using a blanking packet (4 bytes +
+		 * payload + 2 bytes). Its minimal size is therefore 6 bytes
+		 */
+#define HBP_PACKET_OVERHEAD	6
+		hbp = max((unsigned int)HBP_PACKET_OVERHEAD,
+			  (mode->htotal - mode->hsync_end) * Bpp -
+			  HBP_PACKET_OVERHEAD);
+
+		/*
+		 * hblk seems to be the line + porches length.
+		 * The blank is set using a blanking packet (4 bytes + 4 bytes
+		 * + payload + 2 bytes). So minimal size is 10 bytes
+		 */
+#define HBLK_PACKET_OVERHEAD	10
+		hblk_max = (mode->htotal -
+			   (mode->hsync_end - mode->hsync_start)) * Bpp;
+		hblk_max -= HBLK_PACKET_OVERHEAD;
+		hblk = max_t(unsigned int, HBLK_PACKET_OVERHEAD, hblk_max);
+
+		/*
+		 * The frontporch is set using a blanking packet (4 bytes +
+		 * payload + 2 bytes). Its minimal size is therefore 6 bytes
+		 *
+		 * According to BSP code, extra 10 bytes(which is hblk packet
+		 * overhead) is adding for hfp packet overhead since hfp
+		 * depends on hblk.
+		 */
+#define HFP_PACKET_OVERHEAD	6
+		hfp_pkt_overhead = (HFP_PACKET_OVERHEAD + HBLK_PACKET_OVERHEAD);
+		hfp = max((unsigned int)hfp_pkt_overhead,
+			  (mode->hsync_start - mode->hdisplay) * Bpp -
+			  hfp_pkt_overhead);
+
+		/*
+		 * The vertical blank is set using a blanking packet (4 bytes +
+		 * payload + 2 bytes). Its minimal size is therefore 6 bytes
+		 */
+#define VBLK_PACKET_OVERHEAD	6
+		if (device->lanes == 4) {
+			int tmp;
+
+			tmp = (mode->htotal * Bpp) * mode->vtotal -
+			      (hblk + VBLK_PACKET_OVERHEAD);
+			vblk = (device->lanes - tmp % device->lanes);
+		} else {
+			vblk = 0;
+		}
 	}
 
 	/* How many bytes do we need to send all payloads? */
