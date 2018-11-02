@@ -421,6 +421,10 @@ static void sun6i_dsi_setup_burst(struct sun6i_dsi *dsi,
 	regmap_write(dsi->regs, SUN6I_DSI_BURST_LINE_REG,
 		     SUN6I_DSI_BURST_LINE_NUM(line_num) |
 		     SUN6I_DSI_BURST_LINE_SYNC_POINT(sync_point));
+
+	regmap_read(dsi->regs, SUN6I_DSI_BASIC_CTL_REG, &val);
+	val |= SUN6I_DSI_BASIC_CTL_VIDEO_BURST;
+	regmap_write(dsi->regs, SUN6I_DSI_BASIC_CTL_REG, val);
 }
 
 static void sun6i_dsi_setup_inst_loop(struct sun6i_dsi *dsi,
