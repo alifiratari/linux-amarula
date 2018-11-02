@@ -375,20 +375,52 @@ static void sun6i_dsi_setup_burst(struct sun6i_dsi *dsi,
 				  struct drm_display_mode *mode)
 {
 	struct mipi_dsi_device *device = dsi->device;
+	unsigned int Bpp = mipi_dsi_pixel_format_to_bpp(device->format);
+	u32 line_num, edge0, edge1, hact_sync_bp;
+	u32 sync_point, tcon_div;
 	u32 val = 0;
 
-	if ((mode->hsync_start - mode->hdisplay) > 20) {
-		/* Maaaaaagic */
-		u16 drq = (mode->hsync_start - mode->hdisplay) - 20;
+	if (device->mode_flags != MIPI_DSI_MODE_VIDEO_BURST) {
+		if ((mode->hsync_start - mode->hdisplay) > 20) {
+			/* Maaaaaagic */
+			u16 drq = (mode->hsync_start - mode->hdisplay) - 20;
 
-		drq *= mipi_dsi_pixel_format_to_bpp(device->format);
-		drq /= 32;
+			drq *= Bpp;
+			drq /= 32;
 
-		val = (SUN6I_DSI_TCON_DRQ_ENABLE_MODE |
-		       SUN6I_DSI_TCON_DRQ_SET(drq));
+			val = (SUN6I_DSI_TCON_DRQ_ENABLE_MODE |
+			       SUN6I_DSI_TCON_DRQ_SET(drq));
+		}
+
+		regmap_write(dsi->regs, SUN6I_DSI_TCON_DRQ_REG, val);
+
+		return;
 	}
 
-	regmap_write(dsi->regs, SUN6I_DSI_TCON_DRQ_REG, val);
+	sync_point = 40;
+	tcon_div = 8;	/* FIXME need to retrive the divider from TCON */
+
+	line_num = mode->htotal * Bpp / (8 * device->lanes);
+	/* Horizental timings duration excluding front porch */
+	hact_sync_bp = (mode->hdisplay + mode->htotal - mode->hsync_start);
+	edge1 = sync_point + ((hact_sync_bp + 20) * Bpp / (8 * device->lanes));
+	if (edge1 > line_num)
+		edge1 = line_num;
+
+	edge0 = edge1 + (mode->hdisplay + 40) * tcon_div / 8;
+	if (edge0 > line_num)
+		edge0 -= line_num;
+	else
+		edge0 = 1;
+
+	regmap_write(dsi->regs, SUN6I_DSI_BURST_DRQ_REG,
+		     SUN6I_DSI_BURST_DRQ_EDGE1(edge1) |
+		     SUN6I_DSI_BURST_DRQ_EDGE0(edge0));
+	regmap_write(dsi->regs, SUN6I_DSI_TCON_DRQ_REG,
+		     SUN6I_DSI_TCON_DRQ_ENABLE_MODE);
+	regmap_write(dsi->regs, SUN6I_DSI_BURST_LINE_REG,
+		     SUN6I_DSI_BURST_LINE_NUM(line_num) |
+		     SUN6I_DSI_BURST_LINE_SYNC_POINT(sync_point));
 }
 
 static void sun6i_dsi_setup_inst_loop(struct sun6i_dsi *dsi,
