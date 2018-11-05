@@ -642,15 +642,21 @@ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
 	struct sun6i_dsi_timings timings;
 	size_t bytes;
 	u8 *buffer;
+	u32 val = 0;
 
 	/* Do all timing calculations up front to allocate buffer space */
 
 	memset(&timings, 0, sizeof(timings));
 
-	if (device->mode_flags & MIPI_DSI_MODE_VIDEO_BURST)
+	if (device->mode_flags & MIPI_DSI_MODE_VIDEO_BURST) {
 		timings.hblk = (mode->hdisplay * Bpp);
-	else
+
+		regmap_read(dsi->regs, SUN6I_DSI_BASIC_CTL_REG, &val);
+		val |= SUN6I_DSI_BASIC_CTL_HBP_DIS;
+		val |= SUN6I_DSI_BASIC_CTL_HSA_HSE_DIS;
+	} else {
 		sun6i_dsi_get_timings(dsi, mode, &timings);
+	}
 
 	/* How many bytes do we need to send all payloads? */
 	bytes = max_t(size_t, max(max(timings.hfp, timings.hblk),
@@ -659,7 +665,7 @@ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
 	if (WARN_ON(!buffer))
 		return;
 
-	regmap_write(dsi->regs, SUN6I_DSI_BASIC_CTL_REG, 0);
+	regmap_write(dsi->regs, SUN6I_DSI_BASIC_CTL_REG, val);
 
 	regmap_write(dsi->regs, SUN6I_DSI_SYNC_HSS_REG,
 		     sun6i_dsi_build_sync_pkt(MIPI_DSI_H_SYNC_START,
