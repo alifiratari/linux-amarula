@@ -366,6 +366,11 @@ static void sun6i_dsi_inst_init(struct sun6i_dsi *dsi,
 		     SUN6I_DSI_INST_JUMP_CFG_NUM(1));
 };
 
+static unsigned int sun6i_dsi_bpp(struct mipi_dsi_device *device)
+{
+	return mipi_dsi_pixel_format_to_bpp(device->format) / 8;
+}
+
 static u32 sun6i_dsi_get_edge1(struct sun6i_dsi *dsi,
 			       struct drm_display_mode *mode, u32 sync_point)
 {
@@ -433,10 +438,9 @@ static u16 sun6i_dsi_get_timings_vblk(struct sun6i_dsi *dsi,
 	 */
 #define VBLK_PACKET_OVERHEAD	6
 	if (device->lanes == 4) {
-		unsigned int Bpp;
+		unsigned int Bpp = sun6i_dsi_bpp(device);
 		int tmp;
 
-		Bpp = mipi_dsi_pixel_format_to_bpp(device->format) / 8;
 		tmp = (mode->htotal * Bpp) * mode->vtotal -
 		      (hblk + VBLK_PACKET_OVERHEAD);
 		vblk = (device->lanes - tmp % device->lanes);
@@ -450,7 +454,7 @@ static void sun6i_dsi_get_timings(struct sun6i_dsi *dsi,
 				  struct sun6i_dsi_timings *timings)
 {
 	struct mipi_dsi_device *device = dsi->device;
-	unsigned int Bpp = mipi_dsi_pixel_format_to_bpp(device->format) / 8;
+	unsigned int Bpp = sun6i_dsi_bpp(device);
 	u16 hsa, hbp, hblk, hfp, vblk;
 
 	/*
@@ -616,7 +620,7 @@ static void sun6i_dsi_setup_format(struct sun6i_dsi *dsi,
 	}
 	val |= SUN6I_DSI_PIXEL_PH_DT(dt);
 
-	wc = mode->hdisplay * mipi_dsi_pixel_format_to_bpp(device->format) / 8;
+	wc = mode->hdisplay * sun6i_dsi_bpp(device);
 	val |= SUN6I_DSI_PIXEL_PH_WC(wc);
 	val |= SUN6I_DSI_PIXEL_PH_ECC(sun6i_dsi_ecc_compute(val));
 
@@ -638,7 +642,7 @@ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
 				    struct drm_display_mode *mode)
 {
 	struct mipi_dsi_device *device = dsi->device;
-	unsigned int Bpp = mipi_dsi_pixel_format_to_bpp(device->format) / 8;
+	unsigned int Bpp = sun6i_dsi_bpp(device);
 	struct sun6i_dsi_timings timings;
 	size_t bytes;
 	u8 *buffer;
