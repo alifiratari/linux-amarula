@@ -55,9 +55,6 @@ static int csi_notify_complete(struct v4l2_async_notifier *notifier)
 					     notifier);
 	int ret;
 
-	if (notifier->num_subdevs != 1)
-		return -EINVAL;
-
 	ret = v4l2_device_register_subdev_nodes(&csi->v4l);
 	if (ret < 0)
 		return ret;
@@ -112,6 +109,7 @@ static int csi_probe(struct platform_device *pdev)
 		sizeof(csi->mdev.model));
 	csi->mdev.hw_revision = 0;
 	media_device_init(&csi->mdev);
+	v4l2_async_notifier_init(&csi->notifier);
 
 	csi->pad.flags = MEDIA_PAD_FL_SINK | MEDIA_PAD_FL_MUST_CONNECT;
 	ret = media_entity_pads_init(&csi->vdev.entity, 1, &csi->pad);
