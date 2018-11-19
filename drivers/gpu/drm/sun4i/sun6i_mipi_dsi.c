@@ -558,6 +558,8 @@ static void sun6i_dsi_setup_burst(struct sun6i_dsi *dsi,
 		     SUN6I_DSI_BURST_LINE_NUM(line_num) |
 		     SUN6I_DSI_BURST_LINE_SYNC_POINT(sync_point));
 
+	printk("edge0 = %d, edge1 = %d, line_num = %d\n",  edge0, edge1, line_num);
+
 	/* enable burst mode */
 	regmap_read(dsi->regs, SUN6I_DSI_BASIC_CTL_REG, &val);
 	val |= SUN6I_DSI_BASIC_CTL_VIDEO_BURST;
@@ -659,6 +661,9 @@ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
 	} else {
 		sun6i_dsi_get_timings(dsi, mode, &timings);
 	}
+
+	printk("hsa = %d, hbp = %d, hfp = %d, hblk = %d, vblk = %d\n",
+		timings.hsa, timings.hbp, timings.hfp, timings.hblk, timings.vblk);
 
 	/* How many bytes do we need to send all payloads? */
 	bytes = max_t(size_t, max(max(timings.hfp, timings.hblk),
@@ -810,8 +815,12 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
 	sun6i_dphy_init(dsi->dphy, device->lanes);
 	sun6i_dphy_power_on(dsi->dphy, device->lanes);
 
-	if (!IS_ERR(dsi->panel))
+	if (dsi->panel) {
 		drm_panel_prepare(dsi->panel);
+	} else {
+		printk("%s: I'm bridge\n", __func__);	
+		drm_bridge_pre_enable(dsi->out_bridge);
+	}
 
 	/*
 	 * FIXME: This should be moved after the switch to HS mode.
@@ -825,8 +834,12 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
 	 * ordering on the panels I've tested it with, so I guess this
 	 * will do for now, until that IP is better understood.
 	 */
-	if (!IS_ERR(dsi->panel))
+	if (dsi->panel) {
 		drm_panel_enable(dsi->panel);
+	} else {
+		printk("%s: I'm bridge\n", __func__);	
+		drm_bridge_enable(dsi->out_bridge);
+	}
 
 	sun6i_dsi_start(dsi, DSI_START_HSC);
 
@@ -846,6 +859,8 @@ static void sun6i_dsi_encoder_disable(struct drm_encoder *encoder)
 		drm_panel_unprepare(dsi->panel);
 	}
 
+	drm_bridge_disable(dsi->out_bridge);
+	drm_bridge_post_disable(dsi->out_bridge);
 	sun6i_dphy_power_off(dsi->dphy);
 	sun6i_dphy_exit(dsi->dphy);
 
@@ -1003,12 +1018,24 @@ static int sun6i_dsi_attach(struct mipi_dsi_host *host,
 			    struct mipi_dsi_device *device)
 {
 	struct sun6i_dsi *dsi = host_to_sun6i_dsi(host);
+	struct drm_encoder *encoder = &dsi->encoder;
+	struct drm_bridge *out_bridge;
 
-	dsi->device = device;
-	dsi->panel = of_drm_find_panel(device->dev.of_node);
-	if (IS_ERR(dsi->panel))
-		return PTR_ERR(dsi->panel);
+	out_bridge  = of_drm_find_bridge(device->dev.of_node);
+	if (out_bridge) {
+		drm_bridge_attach(encoder, out_bridge, NULL);
+		dsi->out_bridge = out_bridge;
+		encoder->bridge = NULL;
+	} else {
+		dsi->device = device;
+		dsi->panel = of_drm_find_panel(device->dev.of_node);
+		if (IS_ERR(dsi->panel))
+			return PTR_ERR(dsi->panel);
+	}
 
+	dsi->device->lanes = 4;
+	dsi->device->format = MIPI_DSI_FMT_RGB888;
+	dsi->device->mode_flags = MIPI_DSI_MODE_VIDEO_SYNC_PULSE;
 	dev_info(host->dev, "Attached device %s\n", device->name);
 
 	return 0;
@@ -1019,8 +1046,14 @@ static int sun6i_dsi_detach(struct mipi_dsi_host *host,
 {
 	struct sun6i_dsi *dsi = host_to_sun6i_dsi(host);
 
-	dsi->panel = NULL;
-	dsi->device = NULL;
+	if (dsi->panel) {
+		dsi->panel = NULL;
+		dsi->device = NULL;
+	} else {
+		if (dsi->out_bridge->funcs->detach)
+			dsi->out_bridge->funcs->detach(dsi->out_bridge);
+		dsi->out_bridge = NULL;
+	}
 
 	return 0;
 }
