@@ -27,6 +27,7 @@
 #include <linux/delay.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
+#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
 #include <linux/of.h>
@@ -47,6 +48,7 @@ struct goodix_ts_data {
 	struct touchscreen_properties prop;
 	unsigned int max_touch_num;
 	unsigned int int_trigger_type;
+	struct regulator *vcc;
 	struct gpio_desc *gpiod_int;
 	struct gpio_desc *gpiod_rst;
 	u16 id;
@@ -58,6 +60,7 @@ struct goodix_ts_data {
 
 #define GOODIX_GPIO_INT_NAME		"irq"
 #define GOODIX_GPIO_RST_NAME		"reset"
+#define GOODIX_VCC_CTP_NAME		"vcc"
 
 #define GOODIX_MAX_HEIGHT		4096
 #define GOODIX_MAX_WIDTH		4096
@@ -525,11 +528,23 @@ static int goodix_get_gpio_config(struct goodix_ts_data *ts)
 {
 	int error;
 	struct device *dev;
+	struct regulator *regulator;
 	struct gpio_desc *gpiod;
 
 	if (!ts->client)
 		return -EINVAL;
 	dev = &ts->client->dev;
+
+	regulator = devm_regulator_get(dev, GOODIX_VCC_CTP_NAME);
+	if (IS_ERR(regulator)) {
+		error = PTR_ERR(regulator);
+		if (error != -EPROBE_DEFER)
+			dev_err(dev, "Failed to get vcc regulator: %d\n",
+				error);
+		return error;
+	}
+
+	ts->vcc = regulator;
 
 	/* Get the interrupt GPIO pin number */
 	gpiod = devm_gpiod_get_optional(dev, GOODIX_GPIO_INT_NAME, GPIOD_IN);
@@ -786,25 +801,34 @@ static int goodix_ts_probe(struct i2c_client *client,
 	if (error)
 		return error;
 
+	/* power the controller */
+	if (ts->vcc) {
+		error = regulator_enable(ts->vcc);
+		if (error) {
+			dev_err(&client->dev, "Controller fail to enable vcc\n");
+			return error;
+		}
+	}
+
 	if (ts->gpiod_int && ts->gpiod_rst) {
 		/* reset the controller */
 		error = goodix_reset(ts);
 		if (error) {
 			dev_err(&client->dev, "Controller reset failed.\n");
-			return error;
+			goto error;
 		}
 	}
 
 	error = goodix_i2c_test(client);
 	if (error) {
 		dev_err(&client->dev, "I2C communication failure: %d\n", error);
-		return error;
+		goto error;
 	}
 
 	error = goodix_read_version(ts);
 	if (error) {
 		dev_err(&client->dev, "Read version failed.\n");
-		return error;
+		goto error;
 	}
 
 	ts->chip = goodix_get_chip_data(ts->id);
@@ -823,17 +847,22 @@ static int goodix_ts_probe(struct i2c_client *client,
 			dev_err(&client->dev,
 				"Failed to invoke firmware loader: %d\n",
 				error);
-			return error;
+			goto error;
 		}
 
 		return 0;
 	} else {
 		error = goodix_configure_dev(ts);
 		if (error)
-			return error;
+			goto error;
 	}
 
 	return 0;
+
+error:
+	if (ts->vcc)
+		regulator_disable(ts->vcc);
+	return error;
 }
 
 static int goodix_ts_remove(struct i2c_client *client)
