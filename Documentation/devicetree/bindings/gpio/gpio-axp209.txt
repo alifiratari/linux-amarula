@@ -12,6 +12,7 @@ Required properties:
 - compatible: Should be one of:
 	- "x-powers,axp209-gpio"
 	- "x-powers,axp813-gpio"
+	- "x-powers,axp803-gpio", "x-powers,axp813-gpio"
 - #gpio-cells: Should be two. The first cell is the pin number and the
   second is the GPIO flags.
 - gpio-controller: Marks the device node as a GPIO controller.
