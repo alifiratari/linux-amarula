@@ -95,6 +95,7 @@ struct ltr501_samp_table {
 
 enum {
 	ltr501 = 0,
+	ltr507,
 	ltr559,
 	ltr301,
 };
@@ -1398,6 +1399,7 @@ static int ltr501_probe(struct i2c_client *client,
 	int ret, partid, chip_idx = 0;
 	const char *name = NULL;
 
+	printk("%s: 0\n", __func__);
 	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*data));
 	if (!indio_dev)
 		return -ENOMEM;
@@ -1408,6 +1410,7 @@ static int ltr501_probe(struct i2c_client *client,
 		return PTR_ERR(regmap);
 	}
 
+	printk("%s: 1\n", __func__);
 	data = iio_priv(indio_dev);
 	i2c_set_clientdata(client, indio_dev);
 	data->client = client;
@@ -1422,6 +1425,7 @@ static int ltr501_probe(struct i2c_client *client,
 		return PTR_ERR(data->reg_it);
 	}
 
+	printk("%s: 2\n", __func__);
 	data->reg_als_intr = devm_regmap_field_alloc(&client->dev, regmap,
 						     reg_field_als_intr);
 	if (IS_ERR(data->reg_als_intr)) {
@@ -1436,6 +1440,7 @@ static int ltr501_probe(struct i2c_client *client,
 		return PTR_ERR(data->reg_ps_intr);
 	}
 
+	printk("%s: 3\n", __func__);
 	data->reg_als_rate = devm_regmap_field_alloc(&client->dev, regmap,
 						     reg_field_als_rate);
 	if (IS_ERR(data->reg_als_rate)) {
@@ -1450,6 +1455,7 @@ static int ltr501_probe(struct i2c_client *client,
 		return PTR_ERR(data->reg_ps_rate);
 	}
 
+	printk("%s: 4\n", __func__);
 	data->reg_als_prst = devm_regmap_field_alloc(&client->dev, regmap,
 						     reg_field_als_prst);
 	if (IS_ERR(data->reg_als_prst)) {
@@ -1464,9 +1470,14 @@ static int ltr501_probe(struct i2c_client *client,
 		return PTR_ERR(data->reg_ps_prst);
 	}
 
+	printk("%s: 5\n", __func__);
 	ret = regmap_read(data->regmap, LTR501_PART_ID, &partid);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(&client->dev, "failed to read partid.\n");
+		printk("irq#%d\n", client->irq);
 		return ret;
+	}
+	printk("PART_ID#%d, ID#%d\n", partid, id);
 
 	if (id) {
 		name = id->name;
@@ -1479,6 +1490,7 @@ static int ltr501_probe(struct i2c_client *client,
 
 	data->chip_info = &ltr501_chip_info_tbl[chip_idx];
 
+	printk("%s: 6\n", __func__);
 	if ((partid >> 4) != data->chip_info->partid)
 		return -ENODEV;
 
@@ -1489,10 +1501,12 @@ static int ltr501_probe(struct i2c_client *client,
 	indio_dev->name = name;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 
+	printk("%s: 7\n", __func__);
 	ret = ltr501_init(data);
 	if (ret < 0)
 		return ret;
 
+	printk("%s: 8\n", __func__);
 	if (client->irq > 0) {
 		ret = devm_request_threaded_irq(&client->dev, client->irq,
 						NULL, ltr501_interrupt_handler,
@@ -1509,15 +1523,18 @@ static int ltr501_probe(struct i2c_client *client,
 		indio_dev->info = data->chip_info->info_no_irq;
 	}
 
+	printk("%s: 9\n", __func__);
 	ret = iio_triggered_buffer_setup(indio_dev, NULL,
 					 ltr501_trigger_handler, NULL);
 	if (ret)
 		goto powerdown_on_error;
 
+	printk("%s: 10\n", __func__);
 	ret = iio_device_register(indio_dev);
 	if (ret)
 		goto error_unreg_buffer;
 
+	printk("Detcted LTR-507ALS: with PartID#%d\n", data->chip_info->partid);
 	return 0;
 
 error_unreg_buffer:
@@ -1568,17 +1585,27 @@ MODULE_DEVICE_TABLE(acpi, ltr_acpi_match);
 
 static const struct i2c_device_id ltr501_id[] = {
 	{ "ltr501", ltr501},
+	{ "ltr507", ltr507},
 	{ "ltr559", ltr559},
 	{ "ltr301", ltr301},
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ltr501_id);
 
+#ifdef CONFIG_OF
+static const struct of_device_id ltr_of_match[] = {
+	{ .compatible = "liteon,ltr507" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, ltr_of_match);
+#endif
+
 static struct i2c_driver ltr501_driver = {
 	.driver = {
 		.name   = LTR501_DRV_NAME,
 		.pm	= &ltr501_pm_ops,
 		.acpi_match_table = ACPI_PTR(ltr_acpi_match),
+		.of_match_table = of_match_ptr(ltr_of_match),
 	},
 	.probe  = ltr501_probe,
 	.remove	= ltr501_remove,

@@ -31,11 +31,66 @@
 		stdout-path = "serial0:115200n8";
 	};
 
+		i2c-csi0 {
+		compatible = "i2c-gpio";
+		sda-gpios = <&pio 4 13 (GPIO_ACTIVE_HIGH|GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&pio 4 12 (GPIO_ACTIVE_HIGH|GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <5>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ov5640: camera@78 {
+			compatible = "ovti,ov5640";
+			reg = <0x78>;
+			clocks = <&osc24M>;
+			clock-names = "xclk";
+
+			AVDD-supply = <&reg_dldo3>;
+			DOVDD-supply = <&reg_aldo1>;
+			DVDD-supply = <&reg_eldo3>;
+			reset-gpios = <&pio 4 14 GPIO_ACTIVE_HIGH>; /* CSI0-RST: PE16 */
+			powerdown-gpios = <&pio 4 15 GPIO_ACTIVE_HIGH>; /* CSI0-PWDN: PE17 */
+
+			port {
+				ov5640_ep: endpoint {
+					remote-endpoint = <&csi0_ep>;
+					bus-width = <8>;
+					data-shift = <2>;
+					hsync-active = <1>; /* Active high */
+					vsync-active = <0>; /* Active low */
+					data-active = <1>;  /* Active high */
+					pclk-sample = <1>;  /* Rising */
+				};
+			};
+		};
+	};
+
 	wifi_pwrseq: wifi-pwrseq {
 		compatible = "mmc-pwrseq-simple";
 		clocks = <&rtc 1>;
 		clock-names = "ext_clock";
 		reset-gpios = <&r_pio 0 2 GPIO_ACTIVE_LOW>; /* WL-PMU-EN: PL2 */
+	};
+};
+
+&csi0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&csi0_pins>;
+	vcc-pe-supply = <&reg_aldo1>;
+	status = "okay";
+
+	port@0 {
+		reg = <0>;
+
+		csi0_ep: endpoint {
+			remote-endpoint = <&ov5640_ep>;
+			bus-width = <8>;
+			data-shift = <2>;
+			hsync-active = <1>; /* Active high */
+			vsync-active = <0>; /* Active low */
+			data-active = <1>;  /* Active high */
+			pclk-sample = <1>;  /* Rising */
+		};
 	};
 };
 
@@ -62,6 +117,34 @@
 
 &ehci0 {
 	status = "okay";
+};
+
+&i2c0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c0_pins>;
+	status = "okay";
+
+	light@3b {
+		compatible = "liteon,ltr507";
+		reg = <0x3b>;
+		vdd-supply = <&reg_dldo1>;
+		interrupt-parent = <&pio>;
+		interrupts = <7 6 IRQ_TYPE_EDGE_FALLING>;
+		irq-gpios = <&pio 7 6 GPIO_ACTIVE_HIGH>;	/* LS-INT: PH6 */
+	};
+
+	temp@48 {
+		compatible = "st,stlm75";
+		reg = <0x48>;
+		vdd-supply = <&reg_dldo1>;
+		interrupt-parent = <&pio>;
+		interrupts = <7 5 IRQ_TYPE_EDGE_FALLING>;
+		irq-gpios = <&pio 7 5 GPIO_ACTIVE_HIGH>;	/* LS-INT: PH5 */
+	};
+};
+
+&i2c0_pins {
+	bias-pull-up;
 };
 
 &i2c1 {

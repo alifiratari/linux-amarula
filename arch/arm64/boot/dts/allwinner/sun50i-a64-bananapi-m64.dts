@@ -81,6 +81,45 @@
 		};
 	};
 
+	i2c-csi0 {
+		compatible = "i2c-gpio";
+//		pinctrl-names = "default";
+//		pinctrl-0 = <&i2c_csi0_pins>;
+//		sda-gpios = <&pio 4 13 (GPIO_ACTIVE_HIGH|GPIO_OPEN_DRAIN)>;	/* PE13 */
+//		scl-gpios = <&pio 4 12 (GPIO_ACTIVE_HIGH|GPIO_OPEN_DRAIN)>;	/* PE12 */
+		sda-gpios = <&pio 4 13 GPIO_ACTIVE_HIGH>;	/* PE13 */
+		scl-gpios = <&pio 4 12 GPIO_ACTIVE_HIGH>;	/* PE12 */
+		i2c-gpio,delay-us = <5>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ov5640: camera@21 {
+			compatible = "ovti,ov5640";
+			reg = <0x21>;
+			clocks = <&osc24M>;
+		//	clocks = <&ccu CLK_CSI_MISC>;
+			clock-names = "xclk";
+
+			DOVDD-supply = <&reg_aldo1>;
+			AVDD-supply = <&reg_dldo3>;
+			DVDD-supply = <&reg_eldo3>;
+			reset-gpios = <&pio 4 16 GPIO_ACTIVE_LOW>; /* CSI0-RST: PE16 */
+			powerdown-gpios = <&pio 4 17 GPIO_ACTIVE_HIGH>; /* CSI0-PWDN: PE17 */
+
+			port {
+				ov5640_ep: endpoint {
+					remote-endpoint = <&csi0_ep>;
+					bus-width = <8>;
+					data-shift = <2>;
+					hsync-active = <0>; /* Active high */
+					vsync-active = <0>; /* Active low */
+//					data-active = <1>;  /* Active high */
+					pclk-sample = <1>;  /* Rising */
+				};
+			};
+		};
+	};
+
 	leds {
 		compatible = "gpio-leds";
 
@@ -113,6 +152,27 @@
 	wifi_pwrseq: wifi_pwrseq {
 		compatible = "mmc-pwrseq-simple";
 		reset-gpios = <&r_pio 0 2 GPIO_ACTIVE_LOW>; /* PL2 */
+	};
+};
+
+&csi0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&csi0_pins>;
+	vcc-pe-supply = <&reg_dldo1>;
+	status = "okay";
+
+	port@0 {
+		reg = <0>;
+
+		csi0_ep: endpoint {
+			remote-endpoint = <&ov5640_ep>;
+			bus-width = <8>;
+			data-shift = <2>;
+			hsync-active = <0>; /* Active high */
+			vsync-active = <0>; /* Active low */
+//			data-active = <1>;  /* Active high */
+			pclk-sample = <1>;  /* Rising */
+		};
 	};
 };
 
@@ -324,6 +384,12 @@
 	regulator-name = "vcc-wifi";
 };
 
+&reg_dldo3 {
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+	regulator-name = "avdd-csi";
+};
+
 &reg_dldo4 {
 	regulator-min-microvolt = <1800000>;
 	regulator-max-microvolt = <3300000>;
@@ -339,6 +405,12 @@
 	regulator-min-microvolt = <1800000>;
 	regulator-max-microvolt = <1800000>;
 	regulator-name = "cpvdd";
+};
+
+&reg_eldo3 {
+	regulator-min-microvolt = <1500000>;
+	regulator-max-microvolt = <1500000>;
+	regulator-name = "dvdd-csi";
 };
 
 &reg_fldo1 {
