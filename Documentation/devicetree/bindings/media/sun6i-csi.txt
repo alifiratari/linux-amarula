@@ -17,6 +17,9 @@ Required properties:
   - clock-names: the clock names mentioned above
   - resets: phandles to the reset line driving the CSI
 
+Optional properties:
+  - vcc-csi-supply: the VCC-CSI power supply of the CSI PE group
+
 The CSI node should contain one 'port' child node with one child 'endpoint'
 node, according to the bindings defined in
 Documentation/devicetree/bindings/media/video-interfaces.txt.
