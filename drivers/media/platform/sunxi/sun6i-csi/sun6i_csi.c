@@ -18,6 +18,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 #include <linux/reset.h>
 #include <linux/sched.h>
 #include <linux/sizes.h>
@@ -36,6 +37,7 @@ struct sun6i_csi_dev {
 	struct clk			*clk_mod;
 	struct clk			*clk_ram;
 	struct reset_control		*rstc_bus;
+	struct regulator		*regulator;
 
 	int				planar_offset[3];
 };
@@ -163,7 +165,14 @@ int sun6i_csi_set_power(struct sun6i_csi *csi, bool enable)
 		clk_disable_unprepare(sdev->clk_ram);
 		clk_disable_unprepare(sdev->clk_mod);
 		reset_control_assert(sdev->rstc_bus);
+		regulator_disable(sdev->regulator);
 		return 0;
+	}
+
+	ret = regulator_enable(sdev->regulator);
+	if (ret) {
+		dev_err(sdev->dev, "Enable vcc csi supply err %d\n", ret);
+		return ret;
 	}
 
 	ret = clk_prepare_enable(sdev->clk_mod);
@@ -808,6 +817,12 @@ static int sun6i_csi_resource_request(struct sun6i_csi_dev *sdev,
 	io_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(io_base))
 		return PTR_ERR(io_base);
+
+	sdev->regulator = devm_regulator_get(&pdev->dev, "vcc-csi");
+	if (IS_ERR(sdev->regulator)) {
+		dev_err(&pdev->dev, "Unable to acquire csi vcc supply\n");
+		return PTR_ERR(sdev->regulator);
+	}
 
 	sdev->regmap = devm_regmap_init_mmio_clk(&pdev->dev, "bus", io_base,
 						 &sun6i_csi_regmap_config);
