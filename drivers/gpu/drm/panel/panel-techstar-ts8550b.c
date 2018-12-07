@@ -54,8 +54,8 @@ static void techstar_init_sequence(struct techstar *ctx)
 	msleep(200);
 	techstar_dcs_write_seq_static(ctx, 0xFF, 0x77, 0x01, 0x00, 0x00, 0x10);
 	techstar_dcs_write_seq_static(ctx, 0xC0, 0xE9, 0x03);
-	techstar_dcs_write_seq_static(ctx, 0xC1, 0x12, 0x02);
-	techstar_dcs_write_seq_static(ctx, 0xC2, 0x07, 0x06);
+	techstar_dcs_write_seq_static(ctx, 0xC1, 0x12, 0x04);
+	techstar_dcs_write_seq_static(ctx, 0xC2, 0x37, 0x06);
 	techstar_dcs_write_seq_static(ctx, 0xB0, 0x00, 0x0E, 0x15, 0x0F, 0x11,
 				     0x08, 0x08, 0x08, 0x08, 0x23, 0x04, 0x13,
 				     0x12, 0x2B, 0x34, 0x1F);
@@ -186,9 +186,9 @@ static const struct drm_display_mode default_mode = {
 	.htotal		= 480 + 38 + 12 + 12,
 
 	.vdisplay	= 854,
-	.vsync_start	= 854 + 18,
-	.vsync_end	= 854 + 18 + 8,
-	.vtotal		= 854 + 18 + 8 + 4,
+	.vsync_start	= 854 + 4,
+	.vsync_end	= 854 + 4 + 8,
+	.vtotal		= 854 + 4 + 8 + 18,
 
 	.width_mm	= 69,
 	.height_mm	= 139,
