@@ -665,8 +665,8 @@ alloc_buf:
 	regmap_write(dsi->regs, SUN6I_DSI_BASIC_SIZE0_REG,
 		     SUN6I_DSI_BASIC_SIZE0_VSA(mode->vsync_end -
 					       mode->vsync_start) |
-		     SUN6I_DSI_BASIC_SIZE0_VBP(mode->vtotal -
-					       mode->vsync_end));
+		     SUN6I_DSI_BASIC_SIZE0_VBP(mode->vsync_start -
+					       mode->vdisplay));
 
 	regmap_write(dsi->regs, SUN6I_DSI_BASIC_SIZE1_REG,
 		     SUN6I_DSI_BASIC_SIZE1_VACT(mode->vdisplay) |
