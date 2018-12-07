@@ -955,8 +955,7 @@
 		};
 
 		csi: csi@1cb0000 {
-			compatible = "allwinner,sun50i-a64-csi",
-				     "allwinner,sun8i-h3-csi";
+			compatible = "allwinner,sun50i-a64-csi";
 			reg = <0x01cb0000 0x1000>;
 			interrupts = <GIC_SPI 84 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&ccu CLK_BUS_CSI>,
@@ -966,8 +965,6 @@
 			resets = <&ccu RST_BUS_CSI>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&csi_pins>;
-			assigned-clocks = <&ccu CLK_CSI_SCLK>;
-			assigned-clock-rates = <300000000>;
 			status = "disabled";
 		};
 
