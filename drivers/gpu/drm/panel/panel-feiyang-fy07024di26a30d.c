@@ -154,9 +154,9 @@ static const struct drm_display_mode feiyang_default_mode = {
 	.clock = 55000,
 
 	.hdisplay = 1024,
-	.hsync_start = 1024 + 396,
-	.hsync_end = 1024 + 396 + 20,
-	.htotal = 1024 + 396 + 20 + 100,
+	.hsync_start = 1024 + 310,
+	.hsync_end = 1024 + 310 + 20,
+	.htotal = 1024 + 310 + 20 + 90,
 
 	.vdisplay = 600,
 	.vsync_start = 600 + 12,
