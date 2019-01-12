@@ -215,6 +215,7 @@ static int st7701_prepare(struct drm_panel *panel)
 
 	st7701_init_sequence(st7701);
 
+	printk("%s done\n", __func__);
 	return 0;
 }
 
@@ -225,6 +226,7 @@ static int st7701_enable(struct drm_panel *panel)
 	ST7701_DSI(st7701, MIPI_DCS_SET_DISPLAY_ON, 0x00);
 	backlight_enable(st7701->backlight);
 
+	printk("%s done\n", __func__);
 	return 0;
 }
 
@@ -235,6 +237,7 @@ static int st7701_disable(struct drm_panel *panel)
 	backlight_disable(st7701->backlight);
 	ST7701_DSI(st7701, MIPI_DCS_SET_DISPLAY_OFF, 0x00);
 
+	printk("%s done\n", __func__);
 	return 0;
 }
 
@@ -261,6 +264,7 @@ static int st7701_unprepare(struct drm_panel *panel)
 
 	regulator_bulk_disable(st7701->desc->num_supplies, st7701->supplies);
 
+	printk("%s done\n", __func__);
 	return 0;
 }
 
