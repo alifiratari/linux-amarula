@@ -4,17 +4,17 @@
  * Author: Jagan Teki <jagan@amarulasolutions.com>
  */
 
+#include <drm/drm_mipi_dsi.h>
+#include <drm/drm_modes.h>
+#include <drm/drm_panel.h>
+#include <drm/drm_print.h>
+
 #include <linux/backlight.h>
+#include <linux/gpio/consumer.h>
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
-
-#include <linux/gpio/consumer.h>
 #include <linux/regulator/consumer.h>
-
-#include <drm/drmP.h>
-#include <drm/drm_mipi_dsi.h>
-#include <drm/drm_panel.h>
 
 #define FEIYANG_INIT_CMD_LEN	2
 
@@ -68,8 +68,8 @@ static int feiyang_prepare(struct drm_panel *panel)
 	/* T3 (dvdd rise + avdd start + avdd rise) T3 >= 20ms */
 	msleep(20);
 
-	gpiod_set_value(ctx->reset, 1);
-	msleep(50);
+//	gpiod_set_value(ctx->reset, 1);
+//	msleep(50);
 
 	gpiod_set_value(ctx->reset, 0);
 	/* T5 + T6 (avdd rise + video & logic signal rise)
@@ -200,6 +200,7 @@ static int feiyang_dsi_probe(struct mipi_dsi_device *dsi)
 	ctx = devm_kzalloc(&dsi->dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
+
 	mipi_dsi_set_drvdata(dsi, ctx);
 	ctx->dsi = dsi;
 
@@ -231,25 +232,13 @@ static int feiyang_dsi_probe(struct mipi_dsi_device *dsi)
 
 	ret = drm_panel_add(&ctx->panel);
 	if (ret < 0)
-		goto put_backlight;
+		return ret;
 
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO_BURST;
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->lanes = 4;
 
-	ret = mipi_dsi_attach(dsi);
-	if (ret < 0)
-		goto panel_remove;
-
-	return ret;
-
-panel_remove:
-	drm_panel_remove(&ctx->panel);
-put_backlight:
-	if (ctx->backlight)
-		put_device(&ctx->backlight->dev);
-
-	return ret;
+	return mipi_dsi_attach(dsi);
 }
 
 static int feiyang_dsi_remove(struct mipi_dsi_device *dsi)
@@ -258,9 +247,6 @@ static int feiyang_dsi_remove(struct mipi_dsi_device *dsi)
 
 	mipi_dsi_detach(dsi);
 	drm_panel_remove(&ctx->panel);
-
-	if (ctx->backlight)
-		put_device(&ctx->backlight->dev);
 
 	return 0;
 }
