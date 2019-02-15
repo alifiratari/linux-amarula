@@ -40,8 +40,13 @@ static int sun4i_dclk_enable(struct clk_hw *hw)
 	struct sun4i_dclk *dclk = hw_to_dclk(hw);
 
 	return regmap_update_bits(dclk->regmap, SUN4I_TCON0_DCLK_REG,
+#if 1
 				  BIT(SUN4I_TCON0_DCLK_GATE_BIT),
 				  BIT(SUN4I_TCON0_DCLK_GATE_BIT));
+#else
+				  BIT(SUN4I_TCON0_DCLK_GATE_BIT) | BIT(30) | BIT(29) | BIT(28),
+				  BIT(SUN4I_TCON0_DCLK_GATE_BIT) | BIT(30) | BIT(29) | BIT(28));
+#endif
 }
 
 static int sun4i_dclk_is_enabled(struct clk_hw *hw)
@@ -62,12 +67,14 @@ static unsigned long sun4i_dclk_recalc_rate(struct clk_hw *hw,
 
 	regmap_read(dclk->regmap, SUN4I_TCON0_DCLK_REG, &val);
 
+	printk("sun4i_dclk_recalc_rate: divider %d\n", val);
 	val >>= SUN4I_TCON0_DCLK_DIV_SHIFT;
 	val &= (1 << SUN4I_TCON0_DCLK_DIV_WIDTH) - 1;
 
 	if (!val)
 		val = 1;
 
+	printk("%s: val = %d, rate = %ld\n", __func__, val, (parent_rate / val));
 	return parent_rate / val;
 }
 
@@ -80,6 +87,7 @@ static long sun4i_dclk_round_rate(struct clk_hw *hw, unsigned long rate,
 	u8 best_div = 1;
 	int i;
 
+	printk("%s: min_div = %d max_div = %d, rate = %ld\n", __func__, tcon->dclk_min_div, tcon->dclk_max_div, rate);
 	for (i = tcon->dclk_min_div; i <= tcon->dclk_max_div; i++) {
 		u64 ideal = (u64)rate * i;
 		unsigned long rounded;
@@ -94,9 +102,11 @@ static long sun4i_dclk_round_rate(struct clk_hw *hw, unsigned long rate,
 		if (ideal > ULONG_MAX)
 			goto out;
 
+		printk("before round ideal = %lld, div = %d\n", ideal, i);
 		rounded = clk_hw_round_rate(clk_hw_get_parent(hw),
 					    ideal);
 
+		printk("ideal = %lld, rounded = %ld, div = %d\n", ideal, rounded, i);
 		if (rounded == ideal) {
 			best_parent = rounded;
 			best_div = i;
@@ -113,6 +123,7 @@ static long sun4i_dclk_round_rate(struct clk_hw *hw, unsigned long rate,
 out:
 	*parent_rate = best_parent;
 
+	printk("%s: div = %d rate = %ld\n", __func__, best_div, (best_parent / best_div));
 	return best_parent / best_div;
 }
 
@@ -122,6 +133,8 @@ static int sun4i_dclk_set_rate(struct clk_hw *hw, unsigned long rate,
 	struct sun4i_dclk *dclk = hw_to_dclk(hw);
 	u8 div = parent_rate / rate;
 
+	printk("%s rate = %ld, parent = %ld\n", __func__, rate, parent_rate);
+	printk("%s div %d\n", __func__, div);
 	return regmap_update_bits(dclk->regmap, SUN4I_TCON0_DCLK_REG,
 				  GENMASK(6, 0), div);
 }

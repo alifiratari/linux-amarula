@@ -295,6 +295,7 @@ static void sun4i_tcon0_mode_set_dithering(struct sun4i_tcon *tcon,
 	 * The whole dithering process and these parameters are not
 	 * explained in the vendor documents or BSP kernel code.
 	 */
+#if 1
 	regmap_write(tcon->regs, SUN4I_TCON0_FRM_SEED_PR_REG, 0x11111111);
 	regmap_write(tcon->regs, SUN4I_TCON0_FRM_SEED_PG_REG, 0x11111111);
 	regmap_write(tcon->regs, SUN4I_TCON0_FRM_SEED_PB_REG, 0x11111111);
@@ -305,6 +306,18 @@ static void sun4i_tcon0_mode_set_dithering(struct sun4i_tcon *tcon,
 	regmap_write(tcon->regs, SUN4I_TCON0_FRM_TBL1_REG, 0x15151111);
 	regmap_write(tcon->regs, SUN4I_TCON0_FRM_TBL2_REG, 0x57575555);
 	regmap_write(tcon->regs, SUN4I_TCON0_FRM_TBL3_REG, 0x7f7f7777);
+#else
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_SEED_PR_REG, 0x00000000);
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_SEED_PG_REG, 0x00000000);
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_SEED_PB_REG, 0x00000000);
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_SEED_LR_REG, 0x00000000);
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_SEED_LG_REG, 0x00000000);
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_SEED_LB_REG, 0x00000000);
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_TBL0_REG, 0x00000000);
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_TBL1_REG, 0x00000000);
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_TBL2_REG, 0x00000000);
+	regmap_write(tcon->regs, SUN4I_TCON0_FRM_TBL3_REG, 0x00000000);
+#endif
 
 	/* Do dithering if panel only supports 6 bits per color */
 	if (connector->display_info.bpc == 6)
@@ -342,8 +355,7 @@ static void sun4i_tcon0_mode_set_cpu(struct sun4i_tcon *tcon,
 	u32 block_space, start_delay;
 	u32 tcon_div;
 
-	tcon->dclk_min_div = bpp / lanes;
-	tcon->dclk_max_div = bpp / lanes;
+	tcon->dclk_min_div = tcon->dclk_max_div = 1;
 
 	sun4i_tcon0_mode_set_common(tcon, mode);
 
@@ -721,8 +733,13 @@ static irqreturn_t sun4i_tcon_handler(int irq, void *private)
 	struct sun4i_crtc *scrtc = tcon->crtc;
 	struct sunxi_engine *engine = scrtc->engine;
 	unsigned int status;
+	static int cnt;
 
 	regmap_read(tcon->regs, SUN4I_TCON_GINT0_REG, &status);
+
+	cnt++;
+	if (!(cnt % 60))
+		pr_info("%s %.8x\n", __func__, status);
 
 	if (!(status & (SUN4I_TCON_GINT0_VBLANK_INT(0) |
 			SUN4I_TCON_GINT0_VBLANK_INT(1) |

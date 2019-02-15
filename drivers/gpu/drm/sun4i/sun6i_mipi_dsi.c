@@ -381,6 +381,7 @@ static u32 sun6i_dsi_get_edge0(struct sun6i_dsi *dsi,
 	dclk_parent_rate = clk_get_rate(clk_get_parent(tcon->dclk));
 	tcon0_div = dclk_parent_rate / dclk_rate;
 
+	tcon0_div = 4;
 	return (edge1 + (mode->hdisplay + 40) * tcon0_div / 8);
 }
 
@@ -457,6 +458,9 @@ static void sun6i_dsi_setup_burst(struct sun6i_dsi *dsi,
 	else
 		edge0 = 1;
 
+	printk("line_num = %d, edge0 = %d, edge1 = %d\n",
+		line_num, edge0, edge1);
+
 	regmap_write(dsi->regs, SUN6I_DSI_BURST_DRQ_REG,
 		     SUN6I_DSI_BURST_DRQ_EDGE1(edge1) |
 		     SUN6I_DSI_BURST_DRQ_EDGE0(edge0));
@@ -479,6 +483,7 @@ static void sun6i_dsi_setup_inst_loop(struct sun6i_dsi *dsi,
 {
 	u16 delay = sun6i_dsi_setup_inst_delay(dsi, mode);
 
+	delay = 7;
 	regmap_write(dsi->regs, SUN6I_DSI_INST_LOOP_SEL_REG,
 		     DSI_INST_ID_HSC  << (4 * DSI_INST_ID_LP11) |
 		     DSI_INST_ID_HSD  << (4 * DSI_INST_ID_DLY));
@@ -604,6 +609,8 @@ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
 	vblk = 0;
 
 alloc_buf:
+	printk("hsa = %d, hbp = %d, hfp = %d, hblk = %d, vblk = %d\n",
+		hsa, hbp, hfp, hblk, vblk);
 	/* How many bytes do we need to send all payloads? */
 	bytes = max_t(size_t, max(max(hfp, hblk), max(hsa, hbp)), vblk);
 	buffer = kmalloc(bytes, GFP_KERNEL);
@@ -635,8 +642,8 @@ alloc_buf:
 	regmap_write(dsi->regs, SUN6I_DSI_BASIC_SIZE0_REG,
 		     SUN6I_DSI_BASIC_SIZE0_VSA(mode->vsync_end -
 					       mode->vsync_start) |
-		     SUN6I_DSI_BASIC_SIZE0_VBP(mode->vsync_start -
-					       mode->vdisplay));
+		     SUN6I_DSI_BASIC_SIZE0_VBP(mode->vtotal -
+					       mode->vsync_end));
 
 	regmap_write(dsi->regs, SUN6I_DSI_BASIC_SIZE1_REG,
 		     SUN6I_DSI_BASIC_SIZE1_VACT(mode->vdisplay) |
@@ -733,6 +740,7 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
 	pm_runtime_get_sync(dsi->dev);
 
 	delay = sun6i_dsi_get_video_start_delay(dsi, mode);
+	delay = 1942;
 	regmap_write(dsi->regs, SUN6I_DSI_BASIC_CTL1_REG,
 		     SUN6I_DSI_BASIC_CTL1_VIDEO_ST_DELAY(delay) |
 		     SUN6I_DSI_BASIC_CTL1_VIDEO_FILL |
@@ -986,6 +994,10 @@ static ssize_t sun6i_dsi_transfer(struct mipi_dsi_host *host,
 	case MIPI_DSI_DCS_SHORT_WRITE:
 	case MIPI_DSI_DCS_SHORT_WRITE_PARAM:
 	case MIPI_DSI_GENERIC_SHORT_WRITE_2_PARAM:
+		printk("TYPE#0x%x, BYTE0#0x%x, BYTE1#0x%x\n",
+			msg->type,
+			(((u8 *)msg->tx_buf)[0] << 8),
+			(((u8 *)msg->tx_buf)[1] << 16));
 		ret = sun6i_dsi_dcs_write_short(dsi, msg);
 		break;
 
@@ -1113,6 +1125,7 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
 
 	dsi->regulator = devm_regulator_get(dev, "vcc-dsi");
 	if (IS_ERR(dsi->regulator)) {
+		printk("Error raa Jagan...\n");
 		dev_err(dev, "Couldn't get VCC-DSI supply\n");
 		return PTR_ERR(dsi->regulator);
 	}
