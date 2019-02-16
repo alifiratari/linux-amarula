@@ -342,8 +342,7 @@ static void sun4i_tcon0_mode_set_cpu(struct sun4i_tcon *tcon,
 	u32 block_space, start_delay;
 	u32 tcon_div;
 
-	tcon->dclk_min_div = 4;
-	tcon->dclk_max_div = 127;
+	tcon->dclk_min_div = tcon->dclk_max_div = 6;
 
 	sun4i_tcon0_mode_set_common(tcon, mode);
 
